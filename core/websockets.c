@@ -377,7 +377,6 @@ ssize_t uwsgi_websockets_simple_send(struct wsgi_request *wsgi_req, struct uwsgi
 
 int uwsgi_websocket_handshake(struct wsgi_request *wsgi_req, char *key, uint16_t key_len, char *origin, uint16_t origin_len, char *proto, uint16_t proto_len) {
 #ifdef UWSGI_SSL
-    return -1;
     if (!key_len) {
         key = wsgi_req->http_sec_websocket_key;
         key_len = wsgi_req->http_sec_websocket_key_len;
