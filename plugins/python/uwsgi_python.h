@@ -253,6 +253,7 @@ struct uwsgi_python {
 	char *executable;
 
 	int call_uwsgi_fork_hooks;
+	int master_check_signals;
 };
 
 
