@@ -1,12 +1,12 @@
 # uWSGI build system
 
-uwsgi_version = '2.0.13'
+uwsgi_version = '2.0.17.1'
 
 import os
 import re
 import time
 uwsgi_os = os.uname()[0]
-uwsgi_os_k = re.split('[-+]', os.uname()[2])[0]
+uwsgi_os_k = re.split('[-+_]', os.uname()[2])[0]
 uwsgi_os_v = os.uname()[3]
 uwsgi_cpu = os.uname()[4]
 
@@ -385,9 +385,13 @@ def build_uwsgi(uc, print_only=False, gcll=None):
     if additional_sources:
         for item in additional_sources.split(','):
             gcc_list.append(item)
-    
-    cflags.append('-DUWSGI_CFLAGS=\\"%s\\"' % uwsgi_cflags)
-    cflags.append('-DUWSGI_BUILD_DATE="\\"%s\\""' % time.strftime("%d %B %Y %H:%M:%S"))
+
+    if uc.filename.endswith('coverity.ini'):
+        cflags.append('-DUWSGI_CFLAGS=\\"\\"')
+    else:
+        cflags.append('-DUWSGI_CFLAGS=\\"%s\\"' % uwsgi_cflags)
+    build_date = int(os.environ.get('SOURCE_DATE_EPOCH', time.time()))
+    cflags.append('-DUWSGI_BUILD_DATE="\\"%s\\""' % time.strftime("%d %B %Y %H:%M:%S", time.gmtime(build_date)))
 
     post_build = []
 
@@ -635,6 +639,7 @@ class uConf(object):
     def __init__(self, filename, mute=False):
         global GCC
 
+        self.filename = filename
         self.config = ConfigParser.ConfigParser()
         if not mute:
             print("using profile: %s" % filename)
@@ -650,7 +655,10 @@ class uConf(object):
         ulp.write(filename)
         ulp.close()
 
-        self.config.readfp(open_profile(filename))
+        if hasattr(self.config, 'read_file'):
+            self.config.read_file(open_profile(filename))
+        else:
+            self.config.readfp(open_profile(filename))
         self.gcc_list = ['core/utils', 'core/protocol', 'core/socket', 'core/logging', 'core/master', 'core/master_utils', 'core/emperor',
             'core/notify', 'core/mule', 'core/subscription', 'core/stats', 'core/sendfile', 'core/async', 'core/master_checks', 'core/fifo',
             'core/offload', 'core/io', 'core/static', 'core/websockets', 'core/spooler', 'core/snmp', 'core/exceptions', 'core/config',
@@ -672,7 +680,7 @@ class uConf(object):
             self.include_path += os.environ['UWSGI_INCLUDES'].split(',')
 
 
-        self.cflags = ['-O2', '-I.', '-Wall', '-Werror', '-D_LARGEFILE_SOURCE', '-D_FILE_OFFSET_BITS=64'] + os.environ.get("CFLAGS", "").split() + self.get('cflags','').split()
+        self.cflags = ['-O2', '-I.', '-Wall', '-D_LARGEFILE_SOURCE', '-D_FILE_OFFSET_BITS=64'] + os.environ.get("CFLAGS", "").split() + self.get('cflags','').split()
 
         report['kernel'] = uwsgi_os
 
@@ -769,7 +777,10 @@ class uConf(object):
             for option in self.config.options('uwsgi'):
                 interpolations[option] = self.get(option, default='')
             iconfig = ConfigParser.ConfigParser(interpolations)
-            iconfig.readfp(open_profile(inherit))
+            if hasattr(self.config, 'read_file'):
+                iconfig.read_file(open_profile(inherit))
+            else:
+                iconfig.readfp(open_profile(inherit))
 
             for opt in iconfig.options('uwsgi'):
                 if not self.config.has_option('uwsgi', opt):
@@ -826,7 +837,7 @@ class uConf(object):
             self.cflags.append('-DUWSGI_HAS_IFADDRS')
             report['ifaddrs'] = True
 
-        if uwsgi_os in ('FreeBSD', 'OpenBSD'):
+        if uwsgi_os in ('FreeBSD', 'DragonFly', 'OpenBSD'):
             if self.has_include('execinfo.h') or os.path.exists('/usr/local/include/execinfo.h'):
                 if os.path.exists('/usr/local/include/execinfo.h'):
                     self.cflags.append('-I/usr/local/include')
@@ -848,9 +859,10 @@ class uConf(object):
 
         if uwsgi_os == 'OpenBSD':
             try:
-                obsd_major = int(uwsgi_os_k.split('.')[0])
-                obsd_minor = int(uwsgi_os_k.split('.')[1])
-                if obsd_major >= 5 and obsd_minor > 0:
+                obsd_major = uwsgi_os_k.split('.')[0]
+                obsd_minor = uwsgi_os_k.split('.')[1]
+                obsd_ver = int(obsd_major + obsd_minor)
+                if obsd_ver > 50:
                     self.cflags.append('-DUWSGI_NEW_OPENBSD')
                     report['kernel'] = 'New OpenBSD'
             except:
@@ -1294,7 +1306,7 @@ class uConf(object):
         if self.get('xml'):
             if self.get('xml') == 'auto':
                 xmlconf = spcall('xml2-config --libs')
-                if xmlconf:
+                if xmlconf and uwsgi_os != 'Darwin':
                     self.libs.append(xmlconf)
                     xmlconf = spcall("xml2-config --cflags")
                     self.cflags.append(xmlconf)

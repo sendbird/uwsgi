@@ -61,6 +61,7 @@ struct http_status_codes hsc[] = {
 void uwsgi_init_default() {
 
 	uwsgi.cpus = 1;
+	uwsgi.new_argc = -1;
 
 	uwsgi.backtrace_depth = 64;
 	uwsgi.max_apps = 64;
@@ -147,6 +148,7 @@ void uwsgi_init_default() {
 	// 1 day of tolerance
 	uwsgi.subscriptions_sign_check_tolerance = 3600 * 24;
 	uwsgi.ssl_sessions_timeout = 300;
+	uwsgi.ssl_verify_depth = 1;
 #endif
 
 	uwsgi.alarm_freq = 3;
@@ -253,8 +255,16 @@ void uwsgi_commandline_config() {
 
 	uwsgi.option_index = -1;
 
+	int argc = uwsgi.argc;
+	char **argv = uwsgi.argv;
+
+	if (uwsgi.new_argc > -1 && uwsgi.new_argv) {
+		argc = uwsgi.new_argc;
+		argv = uwsgi.new_argv;
+	}
+
 	char *optname;
-	while ((i = getopt_long(uwsgi.argc, uwsgi.argv, uwsgi.short_options, uwsgi.long_options, &uwsgi.option_index)) != -1) {
+	while ((i = getopt_long(argc, argv, uwsgi.short_options, uwsgi.long_options, &uwsgi.option_index)) != -1) {
 
 		if (i == '?') {
 			uwsgi_log("getopt_long() error\n");
@@ -280,9 +290,9 @@ void uwsgi_commandline_config() {
 	uwsgi_log("optind:%d argc:%d\n", optind, uwsgi.argc);
 #endif
 
-	if (optind < uwsgi.argc) {
-		for (i = optind; i < uwsgi.argc; i++) {
-			char *lazy = uwsgi.argv[i];
+	if (optind < argc) {
+		for (i = optind; i < argc; i++) {
+			char *lazy = argv[i];
 			if (lazy[0] != '[') {
 				uwsgi_opt_load(NULL, lazy, NULL);
 				// manage magic mountpoint

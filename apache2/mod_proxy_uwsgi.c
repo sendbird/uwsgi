@@ -2,22 +2,19 @@
         
 *** mod_proxy_uwsgi ***
 
-Copyright 2009-2014 Unbit S.a.s. <info@unbit.it>
+Copyright 2009-2017 Unbit S.a.s. <info@unbit.it>
      
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 To build:
 
@@ -303,7 +300,7 @@ static int uwsgi_response(request_rec *r, proxy_conn_rec *backend, proxy_server_
 	const char *buf;
 	char *value, *end;
 	int len;
-	int backend_broke = 1;
+	int backend_broke = 0;
 	apr_status_t rc;
 	conn_rec *c = r->connection;
 	apr_off_t readbytes;
@@ -372,7 +369,24 @@ static int uwsgi_response(request_rec *r, proxy_conn_rec *backend, proxy_server_
 	if ((buf = apr_table_get(r->headers_out, "Content-Type"))) {
 		ap_set_content_type(r, apr_pstrdup(r->pool, buf));
 	}
-	
+
+	// honor ProxyErrorOverride and ErrorDocument
+#if AP_MODULE_MAGIC_AT_LEAST(20101106,0)
+	proxy_dir_conf *dconf = ap_get_module_config(r->per_dir_config, &proxy_module);
+	if (dconf->error_override && ap_is_HTTP_ERROR(r->status)) {
+#else
+	if (conf->error_override && ap_is_HTTP_ERROR(r->status)) {
+#endif
+		int status = r->status;
+		r->status = HTTP_OK;
+		r->status_line = NULL;
+
+		apr_brigade_cleanup(bb);
+		apr_brigade_cleanup(pass_bb);
+
+		return status;
+	}
+
 	int finish = 0;
 	while(!finish) {
 		rv = ap_get_brigade(rp->input_filters, bb,

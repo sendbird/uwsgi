@@ -519,6 +519,12 @@ void uwsgi_as_root() {
 #endif
 
 	if (in_jail || uwsgi.jailed) {
+		int i;
+		for (i = 0; i < uwsgi.gp_cnt; i++) {
+			if (uwsgi.gp[i]->early_post_jail) {
+				uwsgi.gp[i]->early_post_jail();
+			}
+		}
 		uwsgi_hooks_run(uwsgi.hook_post_jail, "post-jail", 1);
 		struct uwsgi_string_list *usl = NULL;
 		uwsgi_foreach(usl, uwsgi.mount_post_jail) {
@@ -572,7 +578,6 @@ void uwsgi_as_root() {
 		}
 
 
-		int i;
 		for (i = 0; i < uwsgi.gp_cnt; i++) {
 			if (uwsgi.gp[i]->post_jail) {
 				uwsgi.gp[i]->post_jail();
@@ -1486,6 +1491,16 @@ int wsgi_req_accept(int queue, struct wsgi_request *wsgi_req) {
 
 	thunder_lock;
 
+	// Recheck the manage_next_request before going forward.
+	// This is because the worker might get cheaped while it's
+	// blocking on the thunder_lock, because thunder_lock is
+	// not interruptable, it'll slow down the cheaping process
+	// (the worker will handle the next request before shuts down).
+	if (!uwsgi.workers[uwsgi.mywid].manage_next_request) {
+		thunder_unlock;
+		return -1;
+	}
+
 	// heartbeat
 	// in multithreaded mode we are now locked
 	if (uwsgi.has_emperor && uwsgi.heartbeat) {
@@ -1888,6 +1903,14 @@ char *uwsgi_num2str(int num) {
 	return str;
 }
 
+char *uwsgi_float2str(float num) {
+
+	char *str = uwsgi_malloc(11);
+
+	snprintf(str, 11, "%f", num);
+	return str;
+}
+
 char *uwsgi_64bit2str(int64_t num) {
 	char *str = uwsgi_malloc(sizeof(MAX64_STR) + 1);
 	snprintf(str, sizeof(MAX64_STR) + 1, "%lld", (long long) num);
@@ -2047,10 +2070,10 @@ int uwsgi_str4_num(char *str) {
 	return num;
 }
 
-size_t uwsgi_str_num(char *str, int len) {
+uint64_t uwsgi_str_num(char *str, int len) {
 
 	int i;
-	size_t num = 0;
+	uint64_t num = 0;
 
 	uint64_t delta = pow(10, len);
 
@@ -3133,6 +3156,8 @@ pid_t uwsgi_fork(char *name) {
 #if defined(__linux__) || defined(__sun__)
 		int i;
 		for (i = 0; i < uwsgi.argc; i++) {
+			// stop fixing original argv if the new one is bigger
+			if (!uwsgi.orig_argv[i]) break;
 			strcpy(uwsgi.orig_argv[i], uwsgi.argv[i]);
 		}
 #endif
@@ -3605,10 +3630,20 @@ void uwsgi_write_pidfile(char *pidfile_name) {
 	}
 }
 
+void uwsgi_write_pidfile_explicit(char *pidfile_name, pid_t pid) {
+	uwsgi_log("writing pidfile to %s\n", pidfile_name);
+	if (uwsgi_write_intfile(pidfile_name, (int) pid)) {
+		uwsgi_log("could not write pidfile.\n");
+	}
+}
+
 char *uwsgi_expand_path(char *dir, int dir_len, char *ptr) {
-	char src[PATH_MAX + 1];
-	memcpy(src, dir, dir_len);
-	src[dir_len] = 0;
+	if (dir_len > PATH_MAX)
+	{
+		uwsgi_log("invalid path size: %d (max %d)\n", dir_len, PATH_MAX);
+		return NULL;
+	}
+	char *src = uwsgi_concat2n(dir, dir_len, "", 0);
 	char *dst = ptr;
 	if (!dst)
 		dst = uwsgi_malloc(PATH_MAX + 1);
@@ -3616,8 +3651,10 @@ char *uwsgi_expand_path(char *dir, int dir_len, char *ptr) {
 		uwsgi_error_realpath(src);
 		if (!ptr)
 			free(dst);
+		free(src);
 		return NULL;
 	}
+	free(src);
 	return dst;
 }
 
@@ -3829,7 +3866,7 @@ struct uwsgi_thread *uwsgi_thread_new(void (*func) (struct uwsgi_thread *)) {
 	return uwsgi_thread_new_with_data(func, NULL);
 }
 
-int uwsgi_kvlist_parse(char *src, size_t len, char list_separator, char kv_separator, ...) {
+int uwsgi_kvlist_parse(char *src, size_t len, char list_separator, int kv_separator, ...) {
 	size_t i;
 	va_list ap;
 	struct uwsgi_string_list *itemlist = NULL;
@@ -4570,4 +4607,28 @@ retry:
                 counter++;
         }
 	return -1;
+}
+
+void uwsgi_fix_range_for_size(enum uwsgi_range* parsed, int64_t* from, int64_t* to, int64_t size) {
+        if (*parsed != UWSGI_RANGE_PARSED) {
+                return;
+        }
+        if (*from < 0) {
+                *from = size + *from;
+        }
+        if (*to > size-1) {
+                *to = size-1;
+        }
+        if (*from == 0 && *to == size-1) {
+                /* we have a right to reset to 200 OK answer */
+                *parsed = UWSGI_RANGE_NOT_PARSED;
+        }
+        else if (*to >= *from) {
+                *parsed = UWSGI_RANGE_VALID;
+        }
+        else { /* case *from > size-1 is also handled here */
+                *parsed = UWSGI_RANGE_INVALID;
+                *from = 0;
+                *to = 0;
+        }
 }

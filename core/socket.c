@@ -1263,6 +1263,19 @@ void uwsgi_close_all_sockets() {
         }
 }
 
+void uwsgi_shutdown_all_sockets() {
+	uwsgi_log_verbose("shutting down all sockets...\n");
+        struct uwsgi_socket *uwsgi_sock = uwsgi.sockets;
+
+        while (uwsgi_sock) {
+                if (uwsgi_sock->bound) {
+                        shutdown(uwsgi_sock->fd, SHUT_RDWR);
+                        close(uwsgi_sock->fd);
+                }
+                uwsgi_sock = uwsgi_sock->next;
+        }
+}
+
 void uwsgi_close_all_unshared_sockets() {
 	struct uwsgi_socket *uwsgi_sock = uwsgi.sockets;
 
@@ -1825,13 +1838,6 @@ void uwsgi_bind_sockets() {
 
 stdin_done:
 
-	if (uwsgi.chown_socket) {
-		if (!uwsgi.master_as_root) {
-			uwsgi_as_root();
-		}
-	}
-
-
 	// check for auto_port socket
 	uwsgi_sock = uwsgi.sockets;
 	while (uwsgi_sock) {
@@ -1955,6 +1961,7 @@ void uwsgi_protocols_register() {
 	uwsgi_register_protocol("puwsgi", uwsgi_proto_puwsgi_setup);
 
 	uwsgi_register_protocol("http", uwsgi_proto_http_setup);
+	uwsgi_register_protocol("http11", uwsgi_proto_http11_setup);
 
 #ifdef UWSGI_SSL
 	uwsgi_register_protocol("suwsgi", uwsgi_proto_suwsgi_setup);

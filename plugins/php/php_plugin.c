@@ -15,10 +15,14 @@ struct uwsgi_php {
 	struct uwsgi_regexp_list *app_bypass;
 #endif
 	struct uwsgi_string_list *vars;
+	struct uwsgi_string_list *constants;
 	char *docroot;
+	size_t docroot_len;
 	char *app;
 	char *app_qs;
 	char *fallback;
+	char *fallback2;
+	char *fallback_qs;
 	size_t ini_size;
 	int dump_config;
 	char *server_software;
@@ -28,6 +32,7 @@ struct uwsgi_php {
 	struct uwsgi_string_list *exec_after;
 
 	char *sapi_name;
+	HashTable user_config_cache;
 } uphp;
 
 void uwsgi_opt_php_ini(char *opt, char *value, void *foobar) {
@@ -50,11 +55,14 @@ struct uwsgi_option uwsgi_php_options[] = {
         {"php-server-software", required_argument, 0, "force php SERVER_SOFTWARE", uwsgi_opt_set_str, &uphp.server_software, 0},
         {"php-app", required_argument, 0, "force the php file to run at each request", uwsgi_opt_set_str, &uphp.app, 0},
         {"php-app-qs", required_argument, 0, "when in app mode force QUERY_STRING to the specified value + REQUEST_URI", uwsgi_opt_set_str, &uphp.app_qs, 0},
-        {"php-fallback", required_argument, 0, "run the specified php script when the request one does not exist", uwsgi_opt_set_str, &uphp.fallback, 0},
+        {"php-fallback", required_argument, 0, "run the specified php script when the requested one does not exist", uwsgi_opt_set_str, &uphp.fallback, 0},
+        {"php-fallback2", required_argument, 0, "run the specified php script relative to the document root when the requested one does not exist", uwsgi_opt_set_str, &uphp.fallback2, 0},
+        {"php-fallback-qs", required_argument, 0, "php-fallback with QUERY_STRING set", uwsgi_opt_set_str, &uphp.fallback_qs, 0},
 #ifdef UWSGI_PCRE
         {"php-app-bypass", required_argument, 0, "if the regexp matches the uri the --php-app is bypassed", uwsgi_opt_add_regexp_list, &uphp.app_bypass, 0},
 #endif
         {"php-var", required_argument, 0, "add/overwrite a CGI variable at each request", uwsgi_opt_add_string_list, &uphp.vars, 0},
+        {"php-constant", required_argument, 0, "define a php constant for each request", uwsgi_opt_add_string_list, &uphp.constants, 0},
         {"php-dump-config", no_argument, 0, "dump php config (if modified via --php-set or append options)", uwsgi_opt_true, &uphp.dump_config, 0},
         {"php-exec-before", required_argument, 0, "run specified php code before the requested script", uwsgi_opt_add_string_list, &uphp.exec_before, 0},
         {"php-exec-begin", required_argument, 0, "run specified php code before the requested script", uwsgi_opt_add_string_list, &uphp.exec_before, 0},
@@ -208,8 +216,6 @@ static void sapi_uwsgi_register_variables(zval *track_vars_array TSRMLS_DC)
 		}
 		usl = usl->next;
 	}
-
-
 }
 
 static sapi_module_struct uwsgi_sapi_module;
@@ -239,6 +245,21 @@ void uwsgi_php_set(char *opt) {
 extern ps_module ps_mod_uwsgi;
 PHP_MINIT_FUNCTION(uwsgi_php_minit) {
 	php_session_register_module(&ps_mod_uwsgi);
+	struct uwsgi_string_list *usl = uphp.constants;
+	while(usl) {
+		char *equal = strchr(usl->value, '=');
+		if (equal) {
+			size_t name_len = equal - usl->value;
+			char *name = usl->value;
+			char *strval = equal + 1;
+			equal = NULL;
+#ifndef UWSGI_PHP7
+			name_len = name_len + 1;
+#endif
+			zend_register_string_constant(name, name_len, strval, CONST_CS | CONST_PERSISTENT, module_number TSRMLS_CC);
+		}
+		usl = usl->next;
+	}
 	return SUCCESS;
 }
 
@@ -527,6 +548,76 @@ static zend_module_entry uwsgi_module_entry = {
         STANDARD_MODULE_PROPERTIES
 };
 
+typedef struct _user_config_cache_entry {
+	time_t expires;
+	HashTable *user_config;
+} user_config_cache_entry;
+
+#if (PHP_MAJOR_VERSION >= 7)
+static void user_config_cache_entry_dtor(zval *el) {
+	user_config_cache_entry *entry = (user_config_cache_entry *)Z_PTR_P(el);
+#else
+static void user_config_cache_entry_dtor(user_config_cache_entry *entry) {
+#endif
+	zend_hash_destroy(entry->user_config);
+	free(entry->user_config);
+	free(entry);
+}
+
+static void activate_user_config(const char *filename, const char *doc_root, size_t doc_root_len) {
+	char *ptr;
+	user_config_cache_entry *new_entry, *entry;
+
+	time_t request_time = (time_t)sapi_get_request_time();
+
+	// get dirname (path) from filename
+	size_t path_len = (strrchr(filename, DEFAULT_SLASH) - filename) + 1;
+	char path[path_len];
+	memcpy(path, filename, path_len);
+	path[path_len] = '\0';
+
+	// get or create entry from cache
+#if (PHP_MAJOR_VERSION >= 7)
+	if ((entry = zend_hash_str_find_ptr(&uphp.user_config_cache, path, path_len)) == NULL) {
+#else
+	if (zend_hash_find(&uphp.user_config_cache, path, path_len + 1, (void **) &entry) == FAILURE) {
+#endif
+		new_entry = pemalloc(sizeof(user_config_cache_entry), 1);
+		new_entry->expires = 0;
+		new_entry->user_config = (HashTable *) pemalloc(sizeof(HashTable), 1);
+
+		// make zend_hash to store all user.ini settings.
+		zend_hash_init(new_entry->user_config, 0, NULL, (dtor_func_t) config_zval_dtor, 1);
+#if (PHP_MAJOR_VERSION >= 7)
+		entry = zend_hash_str_update_ptr(&uphp.user_config_cache, path, path_len, new_entry);
+#else
+		zend_hash_update(&uphp.user_config_cache, path, path_len + 1, new_entry, sizeof(user_config_cache_entry), (void **) &entry);
+#endif
+	}
+
+	if (request_time > entry->expires) {
+
+		// clear the expired config
+		zend_hash_clean(entry->user_config);
+
+		// set pointer to end of docroot
+		ptr = path + (doc_root_len - 1);
+
+		// parse all user.ini files starting from docroot.
+		while ((ptr = strchr(ptr, DEFAULT_SLASH)) != NULL) {
+			*ptr = 0;
+			php_parse_user_ini_file(path, PG(user_ini_filename), entry->user_config);
+			*ptr = '/';
+			ptr++;
+		}
+
+		// set (new) expiry time
+		entry->expires = request_time + PG(user_ini_cache_ttl);
+	}
+
+	// activate all user.ini variables
+	php_ini_activate_config(entry->user_config, PHP_INI_PERDIR, PHP_INI_STAGE_HTACCESS);
+}
 
 static int php_uwsgi_startup(sapi_module_struct *sapi_module)
 {
@@ -538,8 +629,11 @@ static int php_uwsgi_startup(sapi_module_struct *sapi_module)
 	}
 }
 
+#if ((PHP_MAJOR_VERSION >= 7) && (PHP_MINOR_VERSION >= 1))
+static void sapi_uwsgi_log_message(char *message, int syslog_type_int) {
+#else
 static void sapi_uwsgi_log_message(char *message TSRMLS_DC) {
-
+#endif
 	uwsgi_log("%s\n", message);
 }
 
@@ -601,6 +695,8 @@ int uwsgi_php_init(void) {
 		uwsgi_log("--- end of PHP custom config ---\n");
 	}
 
+	zend_hash_init(&uphp.user_config_cache, 0, NULL, (dtor_func_t) user_config_cache_entry_dtor, 1);
+
 	// fix docroot
         if (uphp.docroot) {
 		char *orig_docroot = uphp.docroot;
@@ -609,6 +705,8 @@ int uwsgi_php_init(void) {
 			uwsgi_log("unable to set php docroot to %s\n", orig_docroot);
 			exit(1);
 		}
+		uwsgi_log("PHP document root set to %s\n", uphp.docroot);
+		uphp.docroot_len = strlen(uphp.docroot);
 	}
 
 	if (uphp.sapi_name) {
@@ -668,6 +766,9 @@ int uwsgi_php_walk(struct wsgi_request *wsgi_req, char *full_path, char *docroot
         if (part < wsgi_req->path_info+wsgi_req->path_info_len) {
                 memcpy(dst, part, part_size-1);
                 *(dst+part_size-1) = 0;
+                if (stat(full_path, &st)) {
+                        return -1;
+                }
         }
 
         return 0;
@@ -765,11 +866,40 @@ oldstyle:
 #endif
 
 	filename = uwsgi_concat4n(wsgi_req->document_root, wsgi_req->document_root_len, "/", 1, wsgi_req->path_info, wsgi_req->path_info_len, "", 0);
+	activate_user_config(filename, wsgi_req->document_root, wsgi_req->document_root_len);
 
 	if (uwsgi_php_walk(wsgi_req, filename, wsgi_req->document_root, wsgi_req->document_root_len, &path_info)) {
 		free(filename);
-		if (uphp.fallback) {
-			filename = uwsgi_str(uphp.fallback);
+
+		if (uphp.fallback || uphp.fallback2) {
+			if (uphp.fallback) {
+				filename = uwsgi_str(uphp.fallback);
+			} else {
+				filename = uwsgi_concat2n(wsgi_req->document_root, strlen(wsgi_req->document_root),
+						uphp.fallback2, strlen(uphp.fallback2));
+				wsgi_req->script_name = uphp.fallback2;
+				wsgi_req->script_name_len = strlen(uphp.fallback2);
+			}
+
+			if (uphp.fallback_qs) {
+				size_t fqs_len = strlen(uphp.fallback_qs);
+				size_t new_qs_len = orig_path_info_len
+					+ fqs_len + 1
+					+ wsgi_req->query_string_len;
+				char *new_qs = ecalloc(1, new_qs_len + 1);
+
+				memcpy(new_qs, uphp.fallback_qs, fqs_len);
+				new_qs[fqs_len] = '=';
+				memcpy(new_qs + fqs_len + 1, orig_path_info, orig_path_info_len);
+				if (wsgi_req->query_string_len) {
+					new_qs[fqs_len + 1 + orig_path_info_len] = '&';
+					memcpy(new_qs + fqs_len + 2 + orig_path_info_len,
+						wsgi_req->query_string, wsgi_req->query_string_len);
+				}
+
+				wsgi_req->query_string = new_qs;
+				wsgi_req->query_string_len = new_qs_len;
+			}
 		}
 		else {
 			uwsgi_404(wsgi_req);
@@ -796,6 +926,7 @@ oldstyle:
 	free(filename);
 	real_filename_len = strlen(real_filename);
 
+	// first check for valid doc roots
 	if (uphp.allowed_docroot) {
 		struct uwsgi_string_list *usl = uphp.allowed_docroot;
 		while(usl) {
@@ -806,6 +937,16 @@ oldstyle:
 		}
 		uwsgi_403(wsgi_req);
 		uwsgi_log("PHP security error: %s is not under an allowed docroot\n", real_filename);
+		return -1;
+	}
+	// then for default docroot (if any)
+	else if (uphp.docroot)
+	{
+		if (!uwsgi_starts_with(real_filename, real_filename_len, uphp.docroot, uphp.docroot_len)) {
+			goto secure;
+		}
+		uwsgi_403(wsgi_req);
+		uwsgi_log("PHP security error: %s is not under the default docroot\n", real_filename);
 		return -1;
 	}
 
@@ -890,7 +1031,7 @@ secure3:
 		wsgi_req->script_name = "";
 		wsgi_req->script_name_len = 0;
 	}
-	else {
+	else if (!uphp.fallback2) {
 		wsgi_req->script_name = orig_path_info;
 		if (path_info) {
 			wsgi_req->script_name_len = path_info - orig_path_info;

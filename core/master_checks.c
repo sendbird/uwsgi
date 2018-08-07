@@ -11,8 +11,13 @@ void uwsgi_master_check_death() {
 				return;
 			}
 		}
+		for(i=0;i<uwsgi.mules_cnt;i++) {
+			if (uwsgi.mules[i].pid > 0) {
+				return;
+			}
+		}
 		uwsgi_log("goodbye to uWSGI.\n");
-		exit(0);
+		exit(uwsgi.status.dying_for_need_app ? UWSGI_FAILED_APP_CODE : 0);
 	}
 }
 
@@ -300,8 +305,14 @@ int uwsgi_master_check_spoolers_deadline() {
 int uwsgi_master_check_spoolers_death(int diedpid) {
 
 	struct uwsgi_spooler *uspool = uwsgi.spoolers;
+
 	while (uspool) {
 		if (uspool->pid > 0 && diedpid == uspool->pid) {
+			if (uspool->cursed_at) {
+				uspool->pid = 0;
+				uspool->cursed_at = 0;
+				uspool->no_mercy_at = 0;
+			}
 			uwsgi_log("OOOPS the spooler is no more...trying respawn...\n");
 			uspool->respawned++;
 			uspool->pid = spooler_start(uspool);
@@ -324,11 +335,14 @@ int uwsgi_master_check_emperor_death(int diedpid) {
 int uwsgi_master_check_mules_death(int diedpid) {
 	int i;
 	for (i = 0; i < uwsgi.mules_cnt; i++) {
-		if (uwsgi.mules[i].pid == diedpid) {
+		if (!(uwsgi.mules[i].pid == diedpid)) continue;
+		if (!uwsgi.mules[i].cursed_at) {
 			uwsgi_log("OOOPS mule %d (pid: %d) crippled...trying respawn...\n", i + 1, uwsgi.mules[i].pid);
-			uwsgi_mule(i + 1);
-			return -1;
 		}
+		uwsgi.mules[i].no_mercy_at = 0;
+		uwsgi.mules[i].cursed_at = 0;
+		uwsgi_mule(i + 1);
+		return -1;
 	}
 	return 0;
 }
@@ -354,7 +368,7 @@ int uwsgi_master_check_daemons_death(int diedpid) {
 
 int uwsgi_worker_is_busy(int wid) {
 	int i;
-	if (uwsgi.workers[uwsgi.mywid].sig) return 1;
+	if (uwsgi.workers[wid].sig) return 1;
 	for(i=0;i<uwsgi.cores;i++) {
 		if (uwsgi.workers[wid].cores[i].in_request) {
 			return 1;

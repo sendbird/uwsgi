@@ -3,10 +3,16 @@
 extern struct uwsgi_server uwsgi;
 
 int uwsgi_static_want_gzip(struct wsgi_request *wsgi_req, char *filename, size_t *filename_len, struct stat *st) {
+	char can_gzip = 0, can_br = 0;
+
 	// check for filename size
 	if (*filename_len + 4 > PATH_MAX) return 0;
 	// check for supported encodings
-	if (!uwsgi_contains_n(wsgi_req->encoding, wsgi_req->encoding_len, "gzip", 4) ) return 0;
+	can_br = uwsgi_contains_n(wsgi_req->encoding, wsgi_req->encoding_len, "br", 2);
+	can_gzip = uwsgi_contains_n(wsgi_req->encoding, wsgi_req->encoding_len, "gzip", 4);
+
+	if(!can_br && !can_gzip)
+		return 0;
 
 	// check for 'all'
 	if (uwsgi.static_gzip_all) goto gzip;
@@ -22,12 +28,12 @@ int uwsgi_static_want_gzip(struct wsgi_request *wsgi_req, char *filename, size_t
 
 	// check for ext/suffix
 	usl = uwsgi.static_gzip_ext;
-        while(usl) {
+	while(usl) {
 		if (!uwsgi_strncmp(filename + (*filename_len - usl->len), usl->len, usl->value, usl->len)) {
 			goto gzip;
 		}
-                usl = usl->next;
-        }
+		usl = usl->next;
+	}
 
 #ifdef UWSGI_PCRE
 	// check for regexp
@@ -42,17 +48,23 @@ int uwsgi_static_want_gzip(struct wsgi_request *wsgi_req, char *filename, size_t
 	return 0;
 
 gzip:
-
-	memcpy(filename + *filename_len, ".gz\0", 4);
-	*filename_len += 3;
-	
-	if (stat(filename, st)) {
+	if (can_br) {
+		memcpy(filename + *filename_len, ".br\0", 4);
+		*filename_len += 3;
+		if (!stat(filename, st)) return 2;
 		*filename_len -= 3;
 		filename[*filename_len] = 0;
-		return 0;
 	}
-	
-	return 1;
+
+	if (can_gzip) {
+		memcpy(filename + *filename_len, ".gz\0", 4);
+		*filename_len += 3;
+		if (!stat(filename, st)) return 1;
+		*filename_len -= 3;
+		filename[*filename_len] = 0;
+	}
+
+	return 0;
 }
 
 int uwsgi_http_date(time_t t, char *dst) {
@@ -436,6 +448,11 @@ static int uwsgi_static_stat(struct wsgi_request *wsgi_req, char *filename, size
 	return -1;
 }
 
+void uwsgi_request_fix_range_for_size(struct wsgi_request *wsgi_req, int64_t size) {
+	uwsgi_fix_range_for_size(&wsgi_req->range_parsed,
+			&wsgi_req->range_from, &wsgi_req->range_to, size);
+}
+
 int uwsgi_real_file_serve(struct wsgi_request *wsgi_req, char *real_filename, size_t real_filename_len, struct stat *st) {
 
 	size_t mime_type_size = 0;
@@ -445,7 +462,7 @@ int uwsgi_real_file_serve(struct wsgi_request *wsgi_req, char *real_filename, si
 	char *mime_type = uwsgi_get_mime_type(real_filename, real_filename_len, &mime_type_size);
 
 	// here we need to choose if we want the gzip variant;
-	if (uwsgi_static_want_gzip(wsgi_req, real_filename, &real_filename_len, st)) use_gzip = 1;
+	use_gzip = uwsgi_static_want_gzip(wsgi_req, real_filename, &real_filename_len, st);
 
 	if (wsgi_req->if_modified_since_len) {
 		time_t ims = parse_http_date(wsgi_req->if_modified_since, wsgi_req->if_modified_since_len);
@@ -462,28 +479,31 @@ int uwsgi_real_file_serve(struct wsgi_request *wsgi_req, char *real_filename, si
 	// static file - don't update avg_rt after request
 	wsgi_req->do_not_account_avg_rt = 1;
 
-	size_t fsize = st->st_size;
-	// security check
-        if (wsgi_req->range_from > fsize) {
-                wsgi_req->range_from = 0;
-                wsgi_req->range_to = 0;
-        }
-	else {
-		fsize -= wsgi_req->range_from;
-	}
+	int64_t fsize = (int64_t)st->st_size;
+	uwsgi_request_fix_range_for_size(wsgi_req, fsize);
+	switch (wsgi_req->range_parsed) {
+	case UWSGI_RANGE_INVALID:
+		if (uwsgi_response_prepare_headers(wsgi_req,
+					"416 Requested Range Not Satisfiable", 35))
+			return -1;
+		if (uwsgi_response_add_content_range(wsgi_req, -1, -1, st->st_size)) return -1;
+		return 0;
+	case UWSGI_RANGE_VALID:
+		{
+			time_t when = 0;
+			if (wsgi_req->if_range != NULL) {
+				when = parse_http_date(wsgi_req->if_range, wsgi_req->if_range_len);
+				// an ETag will result in when == 0
+			}
 
-        if (wsgi_req->range_to) {
-        	fsize = (wsgi_req->range_to - wsgi_req->range_from)+1;
-                if (fsize + wsgi_req->range_from > (size_t) (st->st_size)) {
-                	fsize = st->st_size - wsgi_req->range_from;
-                }
-        }
-
-	// HTTP status
-	if (fsize > 0 && (wsgi_req->range_from || wsgi_req->range_to)) {
-		if (uwsgi_response_prepare_headers(wsgi_req, "206 Partial Content", 19)) return -1;
-	}
-	else {
+			if (when < st->st_mtime) {
+				fsize = wsgi_req->range_to - wsgi_req->range_from + 1;
+				if (uwsgi_response_prepare_headers(wsgi_req, "206 Partial Content", 19)) return -1;
+				break;
+			}
+		}
+		/* fallthrough */
+	default: /* UWSGI_RANGE_NOT_PARSED */
 		if (uwsgi_response_prepare_headers(wsgi_req, "200 OK", 6)) return -1;
 	}
 
@@ -493,8 +513,10 @@ int uwsgi_real_file_serve(struct wsgi_request *wsgi_req, char *real_filename, si
 	uwsgi_add_expires_uri(wsgi_req, st);
 #endif
 
-	if (use_gzip) {
+	if (use_gzip == 1) {
 		if (uwsgi_response_add_header(wsgi_req, "Content-Encoding", 16, "gzip", 4)) return -1;
+	} else if (use_gzip == 2) {
+	    if (uwsgi_response_add_header(wsgi_req, "Content-Encoding", 16, "br", 2)) return -1;
 	}
 
 	// Content-Type (if available)
@@ -525,7 +547,7 @@ int uwsgi_real_file_serve(struct wsgi_request *wsgi_req, char *real_filename, si
 	else {
 		// set Content-Length (to fsize NOT st->st_size)
 		if (uwsgi_response_add_content_length(wsgi_req, fsize)) return -1;
-		if (fsize > 0 && (wsgi_req->range_from || wsgi_req->range_to)) {
+		if (wsgi_req->range_parsed == UWSGI_RANGE_VALID) {
 			// here use the original size !!!
 			if (uwsgi_response_add_content_range(wsgi_req, wsgi_req->range_from, wsgi_req->range_to, st->st_size)) return -1;
 		}

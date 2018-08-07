@@ -684,7 +684,10 @@ void uwsgi_logit_simple(struct wsgi_request *wsgi_req) {
 	ctime_r((const time_t *) &wsgi_req->start_of_request_in_sec, time_request);
 #endif
 
-	uint64_t rt = wsgi_req->end_of_request - wsgi_req->start_of_request;
+	uint64_t rt = 0;
+	// avoid overflow on clock instability (#1489)
+	if (wsgi_req->end_of_request > wsgi_req->start_of_request)
+		rt = wsgi_req->end_of_request - wsgi_req->start_of_request;
 
 	if (uwsgi.log_micros) {
 		tsize = (char *) micros;
@@ -712,7 +715,8 @@ void uwsgi_logit_simple(struct wsgi_request *wsgi_req) {
 
 	}
 
-	rlen = snprintf(logpkt, 4096, "[pid: %d|app: %d|req: %d/%llu] %.*s (%.*s) {%d vars in %d bytes} [%.*s] %.*s %.*s => generated %llu bytes in %llu %s%s(%.*s %d) %d headers in %llu bytes (%d switches on core %d)\n", (int) uwsgi.mypid, wsgi_req->app_id, app_req, (unsigned long long) uwsgi.workers[0].requests, wsgi_req->remote_addr_len, wsgi_req->remote_addr, wsgi_req->remote_user_len, wsgi_req->remote_user, wsgi_req->var_cnt, wsgi_req->uh->pktsize,
+	char *remote_user = wsgi_req->remote_user == NULL ? "" : wsgi_req->remote_user;
+	rlen = snprintf(logpkt, 4096, "[pid: %d|app: %d|req: %d/%llu] %.*s (%.*s) {%d vars in %d bytes} [%.*s] %.*s %.*s => generated %llu bytes in %llu %s%s(%.*s %d) %d headers in %llu bytes (%d switches on core %d)\n", (int) uwsgi.mypid, wsgi_req->app_id, app_req, (unsigned long long) uwsgi.workers[0].requests, wsgi_req->remote_addr_len, wsgi_req->remote_addr, wsgi_req->remote_user_len, remote_user, wsgi_req->var_cnt, wsgi_req->uh->pktsize,
 			24, time_request, wsgi_req->method_len, wsgi_req->method, wsgi_req->uri_len, wsgi_req->uri, (unsigned long long) wsgi_req->response_size, (unsigned long long) rt, tsize, via, wsgi_req->protocol_len, wsgi_req->protocol, wsgi_req->status, wsgi_req->header_cnt, (unsigned long long) wsgi_req->headers_size, wsgi_req->switches, wsgi_req->async_id);
 
 	// not enough space for logging the request, just log a (safe) minimal message
@@ -1163,6 +1167,11 @@ static ssize_t uwsgi_lf_micros(struct wsgi_request * wsgi_req, char **buf) {
 
 static ssize_t uwsgi_lf_msecs(struct wsgi_request * wsgi_req, char **buf) {
 	*buf = uwsgi_num2str((wsgi_req->end_of_request - wsgi_req->start_of_request) / 1000);
+	return strlen(*buf);
+}
+
+static ssize_t uwsgi_lf_secs(struct wsgi_request * wsgi_req, char **buf) {
+	*buf = uwsgi_float2str((wsgi_req->end_of_request - wsgi_req->start_of_request) / 1000000.0);
 	return strlen(*buf);
 }
 
@@ -1880,6 +1889,9 @@ static char *uwsgi_log_encoder_json(struct uwsgi_log_encoder *ule, char *msg, si
                         else if (!uwsgi_strncmp(usl->value, usl->len, "micros", 6)) {
                                 if (uwsgi_buffer_num64(ub, uwsgi_micros())) goto end;
                         }
+                        else if (!uwsgi_strncmp(usl->value, usl->len, "millis", 6)) {
+                                if (uwsgi_buffer_num64(ub, uwsgi_millis())) goto end;
+                        }
                         else if (!uwsgi_starts_with(usl->value, usl->len, "strftime:", 9)) {
                                 char sftime[64];
                                 time_t now = uwsgi_now();
@@ -1931,6 +1943,7 @@ void uwsgi_register_logchunks() {
 	r_logchunk(cl);
 	r_logchunk(micros);
 	r_logchunk(msecs);
+	r_logchunk(secs);
 	r_logchunk(tmsecs);
 	r_logchunk(tmicros);
 	r_logchunk(time);
