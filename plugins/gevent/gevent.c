@@ -19,6 +19,7 @@ static void uwsgi_opt_setup_gevent(char *opt, char *value, void *null) {
 static struct uwsgi_option gevent_options[] = {
         {"gevent", required_argument, 0, "a shortcut enabling gevent loop engine with the specified number of async cores and optimal parameters", uwsgi_opt_setup_gevent, NULL, UWSGI_OPT_THREADS},
         {"gevent-monkey-patch", no_argument, 0, "call gevent.monkey.patch_all() automatically on startup", uwsgi_opt_true, &ugevent.monkey, 0},
+        {"gevent-early-monkey-patch", no_argument, 0, "call gevent.monkey.patch_all() automatically before app loading", uwsgi_opt_true, &ugevent.early_monkey, 0},
         {"gevent-wait-for-hub", no_argument, 0, "wait for gevent hub's death instead of the control greenlet", uwsgi_opt_true, &ugevent.wait_for_hub, 0},
         {0, 0, 0, 0, 0, 0, 0},
 
@@ -56,9 +57,11 @@ PyObject *py_uwsgi_gevent_graceful(PyObject *self, PyObject *args) {
 	uwsgi_log("Gracefully killing worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
         uwsgi.workers[uwsgi.mywid].manage_next_request = 0;
 
-	uwsgi_log_verbose("stopping gevent signals watchers for worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
-	PyObject_CallMethod(ugevent.my_signal_watcher, "stop", NULL);
-	PyObject_CallMethod(ugevent.signal_watcher, "stop", NULL);
+	if (uwsgi.signal_socket > -1) {
+		uwsgi_log_verbose("stopping gevent signals watchers for worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
+		PyObject_CallMethod(ugevent.my_signal_watcher, "stop", NULL);
+		PyObject_CallMethod(ugevent.signal_watcher, "stop", NULL);
+	}
 
 	uwsgi_log_verbose("stopping gevent sockets watchers for worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
 	int i,count = uwsgi_count_sockets(uwsgi.sockets);
@@ -105,9 +108,11 @@ PyObject *py_uwsgi_gevent_int(PyObject *self, PyObject *args) {
         uwsgi_log("Brutally killing worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
         uwsgi.workers[uwsgi.mywid].manage_next_request = 0;
 
-        uwsgi_log_verbose("stopping gevent signals watchers for worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
-        PyObject_CallMethod(ugevent.my_signal_watcher, "stop", NULL);
-        PyObject_CallMethod(ugevent.signal_watcher, "stop", NULL);
+        if (uwsgi.signal_socket > -1) {
+                uwsgi_log_verbose("stopping gevent signals watchers for worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
+                PyObject_CallMethod(ugevent.my_signal_watcher, "stop", NULL);
+                PyObject_CallMethod(ugevent.signal_watcher, "stop", NULL);
+        }
 
         uwsgi_log_verbose("stopping gevent sockets watchers for worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
         int i,count = uwsgi_count_sockets(uwsgi.sockets);
@@ -369,6 +374,14 @@ static void gil_gevent_release() {
 	PyGILState_Release((PyGILState_STATE) pthread_getspecific(up.upt_gil_key));
 }
 
+static void monkey_patch() {
+	PyObject *gevent_monkey_dict = get_uwsgi_pydict("gevent.monkey");
+        if (!gevent_monkey_dict) uwsgi_pyexit;
+        PyObject *gevent_monkey_patch_all = PyDict_GetItemString(gevent_monkey_dict, "patch_all");
+        if (!gevent_monkey_patch_all) uwsgi_pyexit;
+        PyObject *ret = python_call(gevent_monkey_patch_all, PyTuple_New(0), 0, NULL);
+        if (!ret) uwsgi_pyexit;
+}
 static void gevent_loop() {
 
 	// ensure SIGPIPE is ignored
@@ -414,12 +427,7 @@ static void gevent_loop() {
 
 	// call gevent.monkey.patch_all() if requested
 	if (ugevent.monkey) {
-		PyObject *gevent_monkey_dict = get_uwsgi_pydict("gevent.monkey");
-		if (!gevent_monkey_dict) uwsgi_pyexit;
-		PyObject *gevent_monkey_patch_all = PyDict_GetItemString(gevent_monkey_dict, "patch_all");
-        	if (!gevent_monkey_patch_all) uwsgi_pyexit;
-		PyObject *ret = python_call(gevent_monkey_patch_all, PyTuple_New(0), 0, NULL);
-		if (!ret) uwsgi_pyexit;
+		monkey_patch();
 	}
 
 	ugevent.spawn = PyDict_GetItemString(gevent_dict, "spawn");
@@ -573,8 +581,14 @@ static void gevent_loop() {
 
 }
 
-static void gevent_init() {
+static void gevent_preinit_apps() {
+	// call gevent.monkey.patch_all() if requested
+        if (ugevent.early_monkey) {
+                monkey_patch();
+        }
+}
 
+static void gevent_init() {
 	uwsgi_register_loop( (char *) "gevent", gevent_loop);
 }
 
@@ -583,5 +597,6 @@ struct uwsgi_plugin gevent_plugin = {
 
 	.name = "gevent",
 	.options = gevent_options,
+	.preinit_apps = gevent_preinit_apps,
 	.on_load = gevent_init,
 };

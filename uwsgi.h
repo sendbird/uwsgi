@@ -353,9 +353,13 @@ extern int pivot_root(const char *new_root, const char *put_old);
 #define UWSGI_CACHE_FLAG_FIXEXPIRE	1 << 9
 
 #ifdef UWSGI_SSL
-#include "openssl/conf.h"
-#include "openssl/ssl.h"
+#include <openssl/conf.h>
+#include <openssl/ssl.h>
 #include <openssl/err.h>
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define UWSGI_SSL_SESSION_CACHE
+#endif
 #endif
 
 #include <glob.h>
@@ -608,6 +612,8 @@ struct uwsgi_daemon {
 	int throttle;
 
 	char *chdir;
+
+	int max_throttle;
 };
 
 struct uwsgi_logger {
@@ -1074,6 +1080,8 @@ struct uwsgi_plugin {
 	void (*vassal_before_exec)(struct uwsgi_instance *);
 
 	int (*worker)(void);
+
+	void (*early_post_jail) (void);
 };
 
 #ifdef UWSGI_PCRE
@@ -1153,6 +1161,9 @@ struct uwsgi_spooler {
 	int signal_pipe[2];
 
 	struct uwsgi_spooler *next;
+
+	time_t cursed_at;
+	time_t no_mercy_at;
 };
 
 #ifdef UWSGI_ROUTING
@@ -1337,6 +1348,13 @@ struct uwsgi_transformation {
 	struct uwsgi_transformation *next;
 };
 
+enum uwsgi_range {
+	UWSGI_RANGE_NOT_PARSED,
+	UWSGI_RANGE_PARSED,
+	UWSGI_RANGE_VALID,
+	UWSGI_RANGE_INVALID,
+};
+
 struct wsgi_request {
 	int fd;
 	struct uwsgi_header *uh;
@@ -1348,7 +1366,8 @@ struct wsgi_request {
 	char *appid;
 	uint16_t appid_len;
 
-	//this is big enough to contain sockaddr_in
+	// This structure should not be used any more
+	// in favor of the union client_addr at the end
 	struct sockaddr_un c_addr;
 	int c_len;
 
@@ -1502,8 +1521,9 @@ struct wsgi_request {
 	// when set, do not send warnings about bad behaviours
 	int post_warning;
 
-	size_t range_from;
-	size_t range_to;
+	// deprecated fields: size_t is 32bit on 32bit platform
+	size_t __range_from;
+	size_t __range_to;
 
 	// current socket mapped to request
 	struct uwsgi_socket *socket;
@@ -1594,6 +1614,23 @@ struct wsgi_request {
 	int do_not_account_avg_rt;
 	// used for protocol parsers requiring EOF signaling
 	int proto_parser_eof;
+
+	// 64bit range, deprecates size_t __range_from, __range_to
+	enum uwsgi_range range_parsed;
+	int64_t range_from;
+	int64_t range_to;
+
+	char * if_range;
+	uint16_t if_range_len;
+
+	// client address in a type-safe fashion; always use this over
+	// c_addr (which only exists to maintain binary compatibility in this
+	// struct)
+	union address {
+		struct sockaddr_in sin;
+		struct sockaddr_in6 sin6;
+		struct sockaddr_un sun;
+	} client_addr;
 };
 
 
@@ -1664,6 +1701,7 @@ struct uwsgi_instance_status {
 	int workers_reloading;
 	int is_cheap;
 	int is_cleaning;
+	int dying_for_need_app;
 };
 
 struct uwsgi_configurator {
@@ -2773,6 +2811,33 @@ struct uwsgi_server {
 	struct uwsgi_string_list *wait_for_socket;
 	int wait_for_socket_timeout;
 	int mem_collector_freq;
+
+	// uWSGI 2.0.14
+	struct uwsgi_string_list *touch_mules_reload;
+	struct uwsgi_string_list *touch_spoolers_reload;
+	int spooler_reload_mercy;
+
+	int skip_atexit_teardown;
+
+	// uWSGI 2.1 backport
+	int new_argc;
+	char **new_argv;
+
+	// uWSGI 2.0.16
+#ifdef UWSGI_SSL
+	int ssl_verify_depth;
+#endif
+
+	size_t response_header_limit;
+	char *safe_pidfile;
+	char *safe_pidfile2;
+
+	// uWSGI 2.0.17
+	int shutdown_sockets;
+
+#ifdef UWSGI_SSL
+	int tlsv1;
+#endif
 };
 
 struct uwsgi_rpc {
@@ -2982,6 +3047,8 @@ struct uwsgi_worker {
 	int accepting;
 
 	char name[0xff];
+
+	int shutdown_sockets;
 };
 
 
@@ -3312,6 +3379,7 @@ void uwsgi_detach_daemons();
 
 void emperor_loop(void);
 char *uwsgi_num2str(int);
+char *uwsgi_float2str(float);
 char *uwsgi_64bit2str(int64_t);
 
 char *magic_sub(char *, size_t, size_t *, char *[]);
@@ -3430,7 +3498,7 @@ int uwsgi_static_want_gzip(struct wsgi_request *, char *, size_t *, struct stat 
 time_t timegm(struct tm *);
 #endif
 
-size_t uwsgi_str_num(char *, int);
+uint64_t uwsgi_str_num(char *, int);
 size_t uwsgi_str_occurence(char *, size_t, char);
 
 int uwsgi_proto_base_write(struct wsgi_request *, char *, size_t);
@@ -3460,6 +3528,7 @@ void uwsgi_proto_uwsgi_setup(struct uwsgi_socket *);
 void uwsgi_proto_puwsgi_setup(struct uwsgi_socket *);
 void uwsgi_proto_raw_setup(struct uwsgi_socket *);
 void uwsgi_proto_http_setup(struct uwsgi_socket *);
+void uwsgi_proto_http11_setup(struct uwsgi_socket *);
 #ifdef UWSGI_SSL
 void uwsgi_proto_https_setup(struct uwsgi_socket *);
 void uwsgi_proto_suwsgi_setup(struct uwsgi_socket *);
@@ -3491,6 +3560,7 @@ struct uwsgi_socket *uwsgi_new_shared_socket(char *);
 struct uwsgi_socket *uwsgi_del_socket(struct uwsgi_socket *);
 
 void uwsgi_close_all_sockets(void);
+void uwsgi_shutdown_all_sockets(void);
 void uwsgi_close_all_unshared_sockets(void);
 
 struct uwsgi_string_list *uwsgi_string_new_list(struct uwsgi_string_list **, char *);
@@ -3664,7 +3734,7 @@ struct uwsgi_subscribe_slot {
 
 };
 
-void mule_send_msg(int, char *, size_t);
+int mule_send_msg(int, char *, size_t);
 
 uint32_t djb33x_hash(char *, uint64_t);
 void create_signal_pipe(int *);
@@ -3925,6 +3995,7 @@ void uwsgi_setup_post_buffering(void);
 struct uwsgi_lock_item *uwsgi_lock_ipcsem_init(char *);
 
 void uwsgi_write_pidfile(char *);
+void uwsgi_write_pidfile_explicit(char *, pid_t);
 int uwsgi_write_intfile(char *, int);
 
 void uwsgi_protected_close(int);
@@ -3936,6 +4007,7 @@ char *uwsgi_expand_path(char *, int, char *);
 int uwsgi_try_autoload(char *);
 
 uint64_t uwsgi_micros(void);
+uint64_t uwsgi_millis(void);
 int uwsgi_is_file(char *);
 int uwsgi_is_file2(char *, struct stat *);
 int uwsgi_is_dir(char *);
@@ -4356,7 +4428,7 @@ void uwsgi_daemons_smart_check();
 void uwsgi_setup_thread_req(long, struct wsgi_request *);
 void uwsgi_loop_cores_run(void *(*)(void *));
 
-int uwsgi_kvlist_parse(char *, size_t, char, char, ...);
+int uwsgi_kvlist_parse(char *, size_t, char, int, ...);
 int uwsgi_send_http_stats(int);
 
 ssize_t uwsgi_simple_request_read(struct wsgi_request *, char *, size_t);
@@ -4461,13 +4533,16 @@ int uwsgi_proto_ssl_sendfile(struct wsgi_request *, int, size_t, size_t);
 ssize_t uwsgi_sendfile_do(int, int, size_t, size_t);
 int uwsgi_proto_base_fix_headers(struct wsgi_request *);
 int uwsgi_response_add_content_length(struct wsgi_request *, uint64_t);
-int uwsgi_response_add_content_range(struct wsgi_request *, uint64_t, uint64_t, uint64_t);
+void uwsgi_fix_range_for_size(enum uwsgi_range*, int64_t*, int64_t*, int64_t);
+void uwsgi_request_fix_range_for_size(struct wsgi_request *, int64_t);
+int uwsgi_response_add_content_range(struct wsgi_request *, int64_t, int64_t, int64_t);
 int uwsgi_response_add_expires(struct wsgi_request *, uint64_t);
 int uwsgi_response_add_last_modified(struct wsgi_request *, uint64_t);
 int uwsgi_response_add_date(struct wsgi_request *, char *, uint16_t, uint64_t);
 
 const char *uwsgi_http_status_msg(char *, uint16_t *);
 int uwsgi_stats_dump_vars(struct uwsgi_stats *, struct uwsgi_core *);
+int uwsgi_stats_dump_request(struct uwsgi_stats *, struct uwsgi_core *);
 
 int uwsgi_contains_n(char *, size_t, char *, size_t);
 
@@ -4678,6 +4753,8 @@ void uwsgi_log_do_rotate(char *, char *, off_t, int);
 void uwsgi_log_rotate();
 void uwsgi_log_reopen();
 void uwsgi_reload_workers();
+void uwsgi_reload_mules();
+void uwsgi_reload_spoolers();
 void uwsgi_chain_reload();
 void uwsgi_refork_master();
 void uwsgi_update_pidfiles();

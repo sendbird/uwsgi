@@ -2,7 +2,7 @@
 
  *** uWSGI ***
 
- Copyright (C) 2009-2016 Unbit S.a.s. <info@unbit.it>
+ Copyright (C) 2009-2017 Unbit S.a.s. <info@unbit.it>
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
@@ -46,6 +46,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"http-socket", required_argument, 0, "bind to the specified UNIX/TCP socket using HTTP protocol", uwsgi_opt_add_socket, "http", 0},
 	{"http-socket-modifier1", required_argument, 0, "force the specified modifier1 when using HTTP protocol", uwsgi_opt_set_64bit, &uwsgi.http_modifier1, 0},
 	{"http-socket-modifier2", required_argument, 0, "force the specified modifier2 when using HTTP protocol", uwsgi_opt_set_64bit, &uwsgi.http_modifier2, 0},
+
+	{"http11-socket", required_argument, 0, "bind to the specified UNIX/TCP socket using HTTP 1.1 (Keep-Alive) protocol", uwsgi_opt_add_socket, "http11", 0},
 
 #ifdef UWSGI_SSL
 	{"https-socket", required_argument, 0, "bind to the specified UNIX/TCP socket using HTTPS protocol", uwsgi_opt_add_ssl_socket, "https", 0},
@@ -93,6 +95,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 
 	{"skip-zero", no_argument, 0, "skip check of file descriptor 0", uwsgi_opt_true, &uwsgi.skip_zero, 0},
 	{"skip-atexit", no_argument, 0, "skip atexit hooks (ignored by the master)", uwsgi_opt_true, &uwsgi.skip_atexit, 0},
+	{"skip-atexit-teardown", no_argument, 0, "skip atexit teardown (ignored by the master)", uwsgi_opt_true, &uwsgi.skip_atexit_teardown, 0},
 
 	{"set", required_argument, 'S', "set a placeholder or an option", uwsgi_opt_set_placeholder, NULL, UWSGI_OPT_IMMEDIATE},
 	{"set-placeholder", required_argument, 0, "set a placeholder", uwsgi_opt_set_placeholder, (void *) 1, UWSGI_OPT_IMMEDIATE},
@@ -347,6 +350,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 
 	{"pidfile", required_argument, 0, "create pidfile (before privileges drop)", uwsgi_opt_set_str, &uwsgi.pidfile, 0},
 	{"pidfile2", required_argument, 0, "create pidfile (after privileges drop)", uwsgi_opt_set_str, &uwsgi.pidfile2, 0},
+	{"safe-pidfile", required_argument, 0, "create safe pidfile (before privileges drop)", uwsgi_opt_set_str, &uwsgi.safe_pidfile, 0},
+	{"safe-pidfile2", required_argument, 0, "create safe pidfile (after privileges drop)", uwsgi_opt_set_str, &uwsgi.safe_pidfile2, 0},
 	{"chroot", required_argument, 0, "chroot() to the specified directory", uwsgi_opt_set_str, &uwsgi.chroot, 0},
 #ifdef __linux__
 	{"pivot-root", required_argument, 0, "pivot_root() to the specified directories (new_root and put_old must be separated with a space)", uwsgi_opt_set_str, &uwsgi.pivot_root, 0},
@@ -520,6 +525,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"socket-write-timeout", no_argument, 0, "set SO_SNDTIMEO", uwsgi_opt_set_int, &uwsgi.so_send_timeout, 0},
 	{"socket-sndbuf", required_argument, 0, "set SO_SNDBUF", uwsgi_opt_set_64bit, &uwsgi.so_sndbuf, 0},
 	{"socket-rcvbuf", required_argument, 0, "set SO_RCVBUF", uwsgi_opt_set_64bit, &uwsgi.so_rcvbuf, 0},
+	{"shutdown-sockets", no_argument, 0, "force calling shutdown() in addition to close() when sockets are destroyed", uwsgi_opt_true, &uwsgi.shutdown_sockets, 0},
 	{"limit-as", required_argument, 0, "limit processes address space/vsz", uwsgi_opt_set_megabytes, &uwsgi.rl.rlim_max, 0},
 	{"limit-nproc", required_argument, 0, "limit the number of spawnable processes", uwsgi_opt_set_int, &uwsgi.rl_nproc.rlim_max, 0},
 	{"reload-on-as", required_argument, 0, "reload if address space is higher than specified megabytes", uwsgi_opt_set_megabytes, &uwsgi.reload_on_as, UWSGI_OPT_MEMORY},
@@ -542,6 +548,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"never-swap", no_argument, 0, "lock all memory pages avoiding swapping", uwsgi_opt_true, &uwsgi.never_swap, 0},
 	{"touch-reload", required_argument, 0, "reload uWSGI if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_reload, UWSGI_OPT_MASTER},
 	{"touch-workers-reload", required_argument, 0, "trigger reload of (only) workers if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_workers_reload, UWSGI_OPT_MASTER},
+	{"touch-mules-reload", required_argument, 0, "reload mules if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_mules_reload, UWSGI_OPT_MASTER},
+	{"touch-spoolers-reload", required_argument, 0, "reload spoolers if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_spoolers_reload, UWSGI_OPT_MASTER},
 	{"touch-chain-reload", required_argument, 0, "trigger chain reload if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_chain_reload, UWSGI_OPT_MASTER},
 	{"touch-logrotate", required_argument, 0, "trigger logrotation if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_logrotate, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
 	{"touch-logreopen", required_argument, 0, "trigger log reopen if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_logreopen, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
@@ -650,15 +658,20 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"snmp-community", required_argument, 0, "set the snmp community string", uwsgi_opt_snmp_community, NULL, 0},
 #ifdef UWSGI_SSL
 	{"ssl-verbose", no_argument, 0, "be verbose about SSL errors", uwsgi_opt_true, &uwsgi.ssl_verbose, 0},
+	{"ssl-verify-depth", optional_argument, 0, "set maximum certificate verification depth", uwsgi_opt_set_int, &uwsgi.ssl_verify_depth, 0},
+#ifdef UWSGI_SSL_SESSION_CACHE
 	// force master, as ssl sessions caching initialize locking early
 	{"ssl-sessions-use-cache", optional_argument, 0, "use uWSGI cache for ssl sessions storage", uwsgi_opt_set_str, &uwsgi.ssl_sessions_use_cache, UWSGI_OPT_MASTER},
 	{"ssl-session-use-cache", optional_argument, 0, "use uWSGI cache for ssl sessions storage", uwsgi_opt_set_str, &uwsgi.ssl_sessions_use_cache, UWSGI_OPT_MASTER},
 	{"ssl-sessions-timeout", required_argument, 0, "set SSL sessions timeout (default: 300 seconds)", uwsgi_opt_set_int, &uwsgi.ssl_sessions_timeout, 0},
 	{"ssl-session-timeout", required_argument, 0, "set SSL sessions timeout (default: 300 seconds)", uwsgi_opt_set_int, &uwsgi.ssl_sessions_timeout, 0},
+#endif
 	{"sni", required_argument, 0, "add an SNI-governed SSL context", uwsgi_opt_sni, NULL, 0},
 	{"sni-dir", required_argument, 0, "check for cert/key/client_ca file in the specified directory and create a sni/ssl context on demand", uwsgi_opt_set_str, &uwsgi.sni_dir, 0},
 	{"sni-dir-ciphers", required_argument, 0, "set ssl ciphers for sni-dir option", uwsgi_opt_set_str, &uwsgi.sni_dir_ciphers, 0},
 	{"ssl-enable3", no_argument, 0, "enable SSLv3 (insecure)", uwsgi_opt_true, &uwsgi.sslv3, 0},
+	{"ssl-enable-sslv3", no_argument, 0, "enable SSLv3 (insecure)", uwsgi_opt_true, &uwsgi.sslv3, 0},
+	{"ssl-enable-tlsv1", no_argument, 0, "enable TLSv1 (insecure)", uwsgi_opt_true, &uwsgi.tlsv1, 0},
 	{"ssl-option", no_argument, 0, "set a raw ssl option (numeric value)", uwsgi_opt_add_string_list, &uwsgi.ssl_options, 0},
 #ifdef UWSGI_PCRE
 	{"sni-regexp", required_argument, 0, "add an SNI-governed SSL context (the key is a regexp)", uwsgi_opt_sni, NULL, 0},
@@ -750,8 +763,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"log-x-forwarded-for", no_argument, 0, "use the ip from X-Forwarded-For header instead of REMOTE_ADDR", uwsgi_opt_true, &uwsgi.logging_options.log_x_forwarded_for, 0},
 	{"master-as-root", no_argument, 0, "leave master process running as root", uwsgi_opt_true, &uwsgi.master_as_root, 0},
 
-	{"drop-after-init", no_argument, 0, "run privileges drop after plugin initialization", uwsgi_opt_true, &uwsgi.drop_after_init, 0},
-	{"drop-after-apps", no_argument, 0, "run privileges drop after apps loading", uwsgi_opt_true, &uwsgi.drop_after_apps, 0},
+	{"drop-after-init", no_argument, 0, "run privileges drop after plugin initialization, superseded by drop-after-apps", uwsgi_opt_true, &uwsgi.drop_after_init, 0},
+	{"drop-after-apps", no_argument, 0, "run privileges drop after apps loading, superseded by master-as-root", uwsgi_opt_true, &uwsgi.drop_after_apps, 0},
 
 	{"force-cwd", required_argument, 0, "force the initial working directory to the specified value", uwsgi_opt_set_str, &uwsgi.force_cwd, 0},
 	{"binsh", required_argument, 0, "override /bin/sh (used by exec hooks, it always fallback to /bin/sh)", uwsgi_opt_add_string_list, &uwsgi.binsh, 0},
@@ -1003,6 +1016,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"config-py", no_argument, 0, "dump the uwsgiconfig.py used for building the core  (useful for building external plugins)", uwsgi_opt_config_py, NULL, UWSGI_OPT_IMMEDIATE},
 	{"build-plugin", required_argument, 0, "build a uWSGI plugin for the current binary", uwsgi_opt_build_plugin, NULL, UWSGI_OPT_IMMEDIATE},
 	{"version", no_argument, 0, "print uWSGI version", uwsgi_opt_print, UWSGI_VERSION, 0},
+	{"response-headers-limit", required_argument, 0, "set response header maximum size (default: 64k)", uwsgi_opt_set_int, &uwsgi.response_header_limit, 0},
 	{0, 0, 0, 0, 0, 0, 0}
 };
 
@@ -1237,6 +1251,8 @@ void gracefully_kill(int signum) {
 		struct wsgi_request *wsgi_req = current_wsgi_req();
 		wait_for_threads();
 		if (!uwsgi.workers[uwsgi.mywid].cores[wsgi_req->async_id].in_request) {
+			if (uwsgi.workers[uwsgi.mywid].shutdown_sockets)
+				uwsgi_shutdown_all_sockets();
 			exit(UWSGI_RELOAD_CODE);
 		}
 		return;
@@ -1245,10 +1261,14 @@ void gracefully_kill(int signum) {
 
 	// still not found a way to gracefully reload in async mode
 	if (uwsgi.async > 1) {
+		if (uwsgi.workers[uwsgi.mywid].shutdown_sockets)
+			uwsgi_shutdown_all_sockets();
 		exit(UWSGI_RELOAD_CODE);
 	}
 
 	if (!uwsgi.workers[uwsgi.mywid].cores[0].in_request) {
+		if (uwsgi.workers[uwsgi.mywid].shutdown_sockets)
+			uwsgi_shutdown_all_sockets();
 		exit(UWSGI_RELOAD_CODE);
 	}
 }
@@ -1323,6 +1343,8 @@ void gracefully_kill_them_all(int signum) {
         int i;
         for (i = 1; i <= uwsgi.numproc; i++) {
                 if (uwsgi.workers[i].pid > 0) {
+			if (uwsgi.shutdown_sockets)
+				uwsgi.workers[i].shutdown_sockets = 1;
                         uwsgi_curse(i, SIGHUP);
                 }
         }
@@ -1601,6 +1623,22 @@ static void vacuum(void) {
 				}
 				else {
 					uwsgi_log("VACUUM: pidfile2 removed.\n");
+				}
+			}
+			if (uwsgi.safe_pidfile && !uwsgi.uid) {
+				if (unlink(uwsgi.safe_pidfile)) {
+					uwsgi_error("unlink()");
+				}
+				else {
+					uwsgi_log("VACUUM: safe pidfile removed.\n");
+				}
+			}
+			if (uwsgi.safe_pidfile2) {
+				if (unlink(uwsgi.safe_pidfile2)) {
+					uwsgi_error("unlink()");
+				}
+				else {
+					uwsgi_log("VACUUM: safe pidfile2 removed.\n");
 				}
 			}
 			if (uwsgi.chdir) {
@@ -2151,6 +2189,9 @@ void uwsgi_setup(int argc, char *argv[], char *envp[]) {
 #endif
 	uwsgi.binary_path = uwsgi_get_binary_path(argv[0]);
 
+	if(uwsgi.response_header_limit == 0)
+		uwsgi.response_header_limit = UMAX16;
+
 	// ok we can now safely play with argv and environ
 	fixup_argv_and_environ(argc, argv, environ, envp);
 
@@ -2511,6 +2552,10 @@ void uwsgi_setup(int argc, char *argv[], char *envp[]) {
 #if defined(__linux__) && !defined(__ia64__)
 	}
 #endif
+
+	if (uwsgi.safe_pidfile && !uwsgi.is_a_reload) {
+		uwsgi_write_pidfile_explicit(uwsgi.safe_pidfile, masterpid);
+	}
 }
 
 
@@ -2803,6 +2848,10 @@ int uwsgi_start(void *v_argv) {
 		//now bind all the unbound sockets
 		uwsgi_bind_sockets();
 
+		if (!uwsgi.master_as_root && !uwsgi.drop_after_init && !uwsgi.drop_after_apps) {
+			uwsgi_as_root();
+		}
+
 		// put listening socket in non-blocking state and set the protocol
 		uwsgi_set_sockets_protocols();
 
@@ -2818,7 +2867,7 @@ int uwsgi_start(void *v_argv) {
 		}
 	}
 
-	if (uwsgi.drop_after_init) {
+	if (!uwsgi.master_as_root && !uwsgi.drop_after_apps) {
 		uwsgi_as_root();
 	}
 
@@ -3071,7 +3120,7 @@ next:
 		uwsgi_init_all_apps();
 	}
 
-	if (uwsgi.drop_after_apps) {
+	if (!uwsgi.master_as_root) {
 		uwsgi_as_root();
 	}
 
@@ -3236,6 +3285,9 @@ next2:
 		}
 	}
 
+	if (uwsgi.safe_pidfile2 && !uwsgi.is_a_reload) {
+		uwsgi_write_pidfile_explicit(uwsgi.safe_pidfile2, masterpid);
+	}
 
 	// END OF INITIALIZATION
 	return 0;
@@ -4919,6 +4971,12 @@ void uwsgi_update_pidfiles() {
 	}
 	if (uwsgi.pidfile2) {
 		uwsgi_write_pidfile(uwsgi.pidfile2);
+	}
+	if (uwsgi.safe_pidfile) {
+		uwsgi_write_pidfile(uwsgi.safe_pidfile);
+	}
+	if (uwsgi.safe_pidfile2) {
+		uwsgi_write_pidfile(uwsgi.safe_pidfile2);
 	}
 }
 

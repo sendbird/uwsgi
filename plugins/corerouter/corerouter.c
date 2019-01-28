@@ -252,6 +252,18 @@ void uwsgi_opt_corerouter_ss(char *opt, char *value, void *cr) {
 }
 
 
+void uwsgi_opt_corerouter_fallback_key(char *opt, char *value, void *key) {
+    struct uwsgi_corerouter *ptr = (struct uwsgi_corerouter *) key;
+    if (!value) {
+        ptr->fallback_key = NULL;
+        ptr->fallback_key_len = 0;
+        return;
+    }
+    ptr->fallback_key = value;
+    ptr->fallback_key_len = strlen(value);
+}
+
+
 void corerouter_send_stats(struct uwsgi_corerouter *);
 
 void corerouter_manage_subscription(char *key, uint16_t keylen, char *val, uint16_t vallen, void *data) {
@@ -604,7 +616,7 @@ struct corerouter_session *corerouter_alloc_session(struct uwsgi_corerouter *ucr
 	memcpy(&cs->client_sockaddr, cr_addr, cr_addr_len);
 	switch(cr_addr->sa_family) {
 		case AF_INET:
-			if (inet_ntop(AF_INET, &cs->client_sockaddr.sa_in.sin_addr, cs->client_address, cr_addr_len) == NULL) {
+			if (inet_ntop(AF_INET, &cs->client_sockaddr.sa_in.sin_addr, cs->client_address, sizeof(cs->client_address)) == NULL) {
 				uwsgi_error("corerouter_alloc_session/inet_ntop()");
 				memcpy(cs->client_address, "0.0.0.0", 7);
 				cs->client_port[0] = '0';
@@ -614,7 +626,7 @@ struct corerouter_session *corerouter_alloc_session(struct uwsgi_corerouter *ucr
 			break;
 #ifdef AF_INET6
 		case AF_INET6:
-			if (inet_ntop(AF_INET6, &cs->client_sockaddr.sa_in6.sin6_addr, cs->client_address, cr_addr_len) == NULL) {
+			if (inet_ntop(AF_INET6, &cs->client_sockaddr.sa_in6.sin6_addr, cs->client_address, sizeof(cs->client_address)) == NULL) {
 				uwsgi_error("corerouter_alloc_session/inet_ntop()");
 				memcpy(cs->client_address, "0.0.0.0", 7);
 				cs->client_port[0] = '0';

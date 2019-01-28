@@ -1257,6 +1257,7 @@ PyObject *py_uwsgi_mule_msg(PyObject * self, PyObject * args) {
 	PyObject *mule_obj = NULL;
 	int fd = -1;
 	int mule_id = -1;
+	int resp = -1;
 
 	if (!PyArg_ParseTuple(args, "s#|O:mule_msg", &message, &message_len, &mule_obj)) {
                 return NULL;
@@ -1267,7 +1268,7 @@ PyObject *py_uwsgi_mule_msg(PyObject * self, PyObject * args) {
 
 	if (mule_obj == NULL) {
 		UWSGI_RELEASE_GIL
-		mule_send_msg(uwsgi.shared->mule_queue_pipe[0], message, message_len);
+		resp = mule_send_msg(uwsgi.shared->mule_queue_pipe[0], message, message_len);
 		UWSGI_GET_GIL
 	}
 	else {
@@ -1296,14 +1297,19 @@ PyObject *py_uwsgi_mule_msg(PyObject * self, PyObject * args) {
 
 		if (fd > -1) {
 			UWSGI_RELEASE_GIL
-			mule_send_msg(fd, message, message_len);
+			resp = mule_send_msg(fd, message, message_len);
 			UWSGI_GET_GIL
 		}
 	}
 
-	Py_INCREF(Py_None);
-	return Py_None;
-	
+	if(!resp) {
+		Py_INCREF(Py_True);
+		return Py_True;
+	}
+
+	Py_INCREF(Py_False);
+	return Py_False;
+
 }
 
 PyObject *py_uwsgi_mule_get_msg(PyObject * self, PyObject * args, PyObject *kwargs) {
@@ -1379,6 +1385,7 @@ PyObject *py_uwsgi_farm_get_msg(PyObject * self, PyObject * args) {
 
 	ret = poll(farmpoll, count, -1);
 	if (ret <= 0) {
+        	UWSGI_GET_GIL;
 		uwsgi_error("poll()");
 		free(farmpoll);
 		Py_INCREF(Py_None);
@@ -2426,6 +2433,15 @@ PyObject *py_uwsgi_ready_fd(PyObject * self, PyObject * args) {
 	return PyInt_FromLong(uwsgi_ready_fd(wsgi_req));
 }
 
+PyObject *py_uwsgi_accepting(PyObject * self, PyObject * args) {
+	int accepting = 1;
+	if (!PyArg_ParseTuple(args, "|i", &accepting)) {
+		return NULL;
+	}
+	uwsgi.workers[uwsgi.mywid].accepting = !!accepting;
+	return Py_None;
+}
+
 PyObject *py_uwsgi_parse_file(PyObject * self, PyObject * args) {
 
 	char *filename;
@@ -2590,6 +2606,7 @@ static PyMethodDef uwsgi_advanced_methods[] = {
 	{"is_locked", py_uwsgi_is_locked, METH_VARARGS, ""},
 	{"unlock", py_uwsgi_unlock, METH_VARARGS, ""},
 	{"cl", py_uwsgi_cl, METH_VARARGS, ""},
+	{"accepting", py_uwsgi_accepting, METH_VARARGS, ""},
 
 	{"setprocname", py_uwsgi_setprocname, METH_VARARGS, ""},
 
