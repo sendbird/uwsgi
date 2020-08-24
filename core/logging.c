@@ -752,10 +752,11 @@ void get_memusage(uint64_t * rss, uint64_t * vsz) {
 		i = fscanf(procfile, "%*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %llu %lld", (unsigned long long *) vsz, (unsigned long long *) rss);
 		if (i != 2) {
 			uwsgi_log("warning: invalid record in /proc/self/stat\n");
+		} else {
+			*rss = *rss * uwsgi.page_size;
 		}
 		fclose(procfile);
 	}
-	*rss = *rss * uwsgi.page_size;
 #elif defined(__CYGWIN__)
 	// same as Linux but rss is not in pages...
 	FILE *procfile;
@@ -1082,19 +1083,18 @@ static ssize_t uwsgi_lf_status(struct wsgi_request *wsgi_req, char **buf) {
 	return strlen(*buf);
 }
 
-
 static ssize_t uwsgi_lf_rsize(struct wsgi_request *wsgi_req, char **buf) {
-	*buf = uwsgi_num2str(wsgi_req->response_size);
+	*buf = uwsgi_size2str(wsgi_req->response_size);
 	return strlen(*buf);
 }
 
 static ssize_t uwsgi_lf_hsize(struct wsgi_request *wsgi_req, char **buf) {
-	*buf = uwsgi_num2str(wsgi_req->headers_size);
+	*buf = uwsgi_size2str(wsgi_req->headers_size);
 	return strlen(*buf);
 }
 
 static ssize_t uwsgi_lf_size(struct wsgi_request *wsgi_req, char **buf) {
-	*buf = uwsgi_num2str(wsgi_req->headers_size+wsgi_req->response_size);
+	*buf = uwsgi_size2str(wsgi_req->headers_size+wsgi_req->response_size);
 	return strlen(*buf);
 }
 

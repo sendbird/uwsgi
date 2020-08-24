@@ -28,9 +28,10 @@ pid_t masterpid;
 
 #if defined(__APPLE__) && defined(UWSGI_AS_SHARED_LIBRARY)
 #include <crt_externs.h>
-char **environ;
+#define UWSGI_ENVIRON (*_NSGetEnviron())
 #else
 extern char **environ;
+#define UWSGI_ENVIRON environ
 #endif
 
 UWSGI_DECLARE_EMBEDDED_PLUGINS;
@@ -177,7 +178,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"connect-and-read", required_argument, 0, "connect to a socket and wait for data from it", uwsgi_opt_connect_and_read, NULL, UWSGI_OPT_IMMEDIATE},
 	{"extract", required_argument, 0, "fetch/dump any supported address to stdout", uwsgi_opt_extract, NULL, UWSGI_OPT_IMMEDIATE},
 
-	{"listen", required_argument, 'l', "set the socket listen queue size", uwsgi_opt_set_int, &uwsgi.listen_queue, 0},
+	{"listen", required_argument, 'l', "set the socket listen queue size", uwsgi_opt_set_int, &uwsgi.listen_queue, UWSGI_OPT_IMMEDIATE},
 	{"max-vars", required_argument, 'v', "set the amount of internal iovec/vars structures", uwsgi_opt_max_vars, NULL, 0},
 	{"max-apps", required_argument, 0, "set the maximum number of per-worker applications", uwsgi_opt_set_int, &uwsgi.max_apps, 0},
 	{"buffer-size", required_argument, 'b', "set internal buffer size", uwsgi_opt_set_16bit, &uwsgi.buffer_size, 0},
@@ -238,6 +239,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 #if defined(__linux__) && !defined(OBSOLETE_LINUX_KERNEL)
 	{"emperor-use-clone", required_argument, 0, "use clone() instead of fork() passing the specified unshare() flags", uwsgi_opt_set_unshare, &uwsgi.emperor_clone, 0},
 #endif
+	{"emperor-graceful-shutdown", no_argument, 0, "use vassals graceful shutdown during ragnarok", uwsgi_opt_true, &uwsgi.emperor_graceful_shutdown, 0},
 #ifdef UWSGI_CAP
 	{"emperor-cap", required_argument, 0, "set vassals capability", uwsgi_opt_set_emperor_cap, NULL, 0},
 	{"vassals-cap", required_argument, 0, "set vassals capability", uwsgi_opt_set_emperor_cap, NULL, 0},
@@ -274,6 +276,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"max-requests", required_argument, 'R', "reload workers after the specified amount of managed requests", uwsgi_opt_set_64bit, &uwsgi.max_requests, 0},
 	{"min-worker-lifetime", required_argument, 0, "number of seconds worker must run before being reloaded (default is 60)", uwsgi_opt_set_64bit, &uwsgi.min_worker_lifetime, 0},
 	{"max-worker-lifetime", required_argument, 0, "reload workers after the specified amount of seconds (default is disabled)", uwsgi_opt_set_64bit, &uwsgi.max_worker_lifetime, 0},
+	{"max-worker-lifetime-delta", required_argument, 0, "add (worker_id * delta) seconds to the max_worker_lifetime value of each worker", uwsgi_opt_set_int, &uwsgi.max_worker_lifetime_delta, 0},
 
 	{"socket-timeout", required_argument, 'z', "set internal sockets timeout", uwsgi_opt_set_int, &uwsgi.socket_timeout, 0},
 	{"no-fd-passing", no_argument, 0, "disable file descriptor passing", uwsgi_opt_true, &uwsgi.no_fd_passing, 0},
@@ -1740,7 +1743,7 @@ static void fixup_argv_and_environ(int argc, char **argv, char **environ, char *
 	uwsgi.orig_argv = argv;
 	uwsgi.argv = argv;
 	uwsgi.argc = argc;
-	uwsgi.environ = environ;
+	uwsgi.environ = UWSGI_ENVIRON;
 
 	// avoid messing with fake environ
 	if (envp && *environ != *envp) return;
@@ -2057,13 +2060,6 @@ static char *uwsgi_at_file_read(char *filename) {
 }
 
 void uwsgi_setup(int argc, char *argv[], char *envp[]) {
-#ifdef UWSGI_AS_SHARED_LIBRARY
-#ifdef __APPLE__
-	char ***envPtr = _NSGetEnviron();
-	environ = *envPtr;
-#endif
-#endif
-
 	int i;
 
 	struct utsname uuts;
@@ -2106,8 +2102,6 @@ void uwsgi_setup(int argc, char *argv[], char *envp[]) {
 	atexit(vacuum);
 	// call user scripts
 	atexit(uwsgi_exec_atexit);
-	// call plugin specific exit hooks
-	atexit(uwsgi_plugins_atexit);
 #ifdef UWSGI_SSL
 	// call legions death hooks
 	atexit(uwsgi_legion_atexit);
@@ -2193,7 +2187,7 @@ void uwsgi_setup(int argc, char *argv[], char *envp[]) {
 		uwsgi.response_header_limit = UMAX16;
 
 	// ok we can now safely play with argv and environ
-	fixup_argv_and_environ(argc, argv, environ, envp);
+	fixup_argv_and_environ(argc, argv, UWSGI_ENVIRON, envp);
 
 	if (gethostname(uwsgi.hostname, 255)) {
 		uwsgi_error("gethostname()");
@@ -2247,7 +2241,7 @@ void uwsgi_setup(int argc, char *argv[], char *envp[]) {
 	build_options();
 #endif
 	//parse environ
-	parse_sys_envs(environ);
+	parse_sys_envs(UWSGI_ENVIRON);
 
 	// parse commandline options
 	uwsgi_commandline_config();
@@ -3120,6 +3114,11 @@ next:
 		uwsgi_init_all_apps();
 	}
 
+	// Register uwsgi atexit plugin callbacks after all applications have
+	// been loaded. This ensures plugin atexit callbacks are called prior
+	// to application registered atexit callbacks.
+	atexit(uwsgi_plugins_atexit);
+
 	if (!uwsgi.master_as_root) {
 		uwsgi_as_root();
 	}
@@ -3304,7 +3303,7 @@ void *mem_collector(void *foobar) {
 	uwsgi_log_verbose("mem-collector thread started for worker %d\n", uwsgi.mywid);
 	for(;;) {
 		sleep(uwsgi.mem_collector_freq);
-		uint64_t rss, vsz;
+		uint64_t rss = 0, vsz = 0;
 		get_memusage(&rss, &vsz);
 		uwsgi.workers[uwsgi.mywid].rss_size = rss;
 		uwsgi.workers[uwsgi.mywid].vsz_size = vsz;

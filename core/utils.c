@@ -585,13 +585,15 @@ void uwsgi_as_root() {
 		}
 	}
 
-	if (uwsgi.chroot && !uwsgi.reloads) {
+	if (uwsgi.chroot && !uwsgi.is_chrooted && !uwsgi.reloads) {
 		if (!uwsgi.master_as_root)
 			uwsgi_log("chroot() to %s\n", uwsgi.chroot);
+
 		if (chroot(uwsgi.chroot)) {
 			uwsgi_error("chroot()");
 			exit(1);
 		}
+		uwsgi.is_chrooted = 1;
 #ifdef __linux__
 		if (uwsgi.logging_options.memory_report) {
 			uwsgi_log("*** Warning, on linux system you have to bind-mount the /proc fs in your chroot to get memory debug/report.\n");
@@ -989,7 +991,7 @@ void uwsgi_as_root() {
 	return;
 
 nonroot:
-	if (uwsgi.chroot && !uwsgi.is_a_reload) {
+	if (uwsgi.chroot && !uwsgi.is_chrooted && !uwsgi.is_a_reload) {
 		uwsgi_log("cannot chroot() as non-root user\n");
 		exit(1);
 	}
@@ -1735,16 +1737,19 @@ char *uwsgi_substitute(char *src, char *what, char *with) {
 
 	char *dst = uwsgi_calloc(len);
 	char *ptr = src;
+	char *dst_ptr = dst;
 
 	p = strstr(ptr, what);
 	while (p) {
-		strncat(dst, ptr, (p - ptr));
-		strncat(dst, with, with_len);
+		memcpy(dst_ptr, ptr, p - ptr);
+		dst_ptr += p - ptr;
+		memcpy(dst_ptr, with, with_len);
+		dst_ptr += with_len;
 		ptr = p + wlen;
 		p = strstr(ptr, what);
 	}
 
-	strncat(dst, ptr, strlen(ptr));
+	snprintf(dst_ptr, strlen(ptr) + 1, "%s", ptr);
 
 	return dst;
 }
@@ -1914,6 +1919,12 @@ char *uwsgi_float2str(float num) {
 char *uwsgi_64bit2str(int64_t num) {
 	char *str = uwsgi_malloc(sizeof(MAX64_STR) + 1);
 	snprintf(str, sizeof(MAX64_STR) + 1, "%lld", (long long) num);
+	return str;
+}
+
+char *uwsgi_size2str(size_t num) {
+	char *str = uwsgi_malloc(sizeof(UMAX64_STR) + 1);
+	snprintf(str, sizeof(UMAX64_STR) + 1, "%llu", (unsigned long long) num);
 	return str;
 }
 

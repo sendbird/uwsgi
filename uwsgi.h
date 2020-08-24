@@ -614,6 +614,8 @@ struct uwsgi_daemon {
 	char *chdir;
 
 	int max_throttle;
+
+	int notifypid;
 };
 
 struct uwsgi_logger {
@@ -1631,6 +1633,8 @@ struct wsgi_request {
 		struct sockaddr_in6 sin6;
 		struct sockaddr_un sun;
 	} client_addr;
+
+	uint8_t websocket_is_fin;
 };
 
 
@@ -2838,6 +2842,13 @@ struct uwsgi_server {
 #ifdef UWSGI_SSL
 	int tlsv1;
 #endif
+
+	// uWSGI 2.0.19
+	int emperor_graceful_shutdown;
+	int is_chrooted;
+	struct uwsgi_buffer *websockets_continuation_buffer;
+
+	uint64_t max_worker_lifetime_delta;
 };
 
 struct uwsgi_rpc {
@@ -3381,6 +3392,7 @@ void emperor_loop(void);
 char *uwsgi_num2str(int);
 char *uwsgi_float2str(float);
 char *uwsgi_64bit2str(int64_t);
+char *uwsgi_size2str(size_t);
 
 char *magic_sub(char *, size_t, size_t *, char *[]);
 void init_magic_table(char *[]);
@@ -4406,7 +4418,7 @@ int uwsgi_offload_run(struct wsgi_request *, struct uwsgi_offload_request *, int
 void uwsgi_offload_engines_register_all(void);
 
 struct uwsgi_thread *uwsgi_offload_thread_start(void);
-int uwsgi_offload_request_sendfile_do(struct wsgi_request *, int, size_t);
+int uwsgi_offload_request_sendfile_do(struct wsgi_request *, int, size_t, size_t);
 int uwsgi_offload_request_net_do(struct wsgi_request *, char *, struct uwsgi_buffer *);
 int uwsgi_offload_request_memory_do(struct wsgi_request *, char *, size_t);
 int uwsgi_offload_request_pipe_do(struct wsgi_request *, int, size_t);

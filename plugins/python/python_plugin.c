@@ -971,20 +971,20 @@ int uwsgi_python_mount_app(char *mountpoint, char *app) {
 
 char *uwsgi_pythonize(char *orig) {
 
-	char *name = uwsgi_concat2(orig, "");
-	size_t i;
-	size_t len = 0;
+	char *name;
+	size_t i, len, offset = 0;
 
-	if (!strncmp(name, "sym://", 6)) {
-		name+=6;
+	if (!strncmp(orig, "sym://", 6)) {
+		offset = 6;
 	}
-	else if (!strncmp(name, "http://", 7)) {
-		name+=7;
+	else if (!strncmp(orig, "http://", 7)) {
+		offset = 7;
 	}
-	else if (!strncmp(name, "data://", 7)) {
-		name+=7;
+	else if (!strncmp(orig, "data://", 7)) {
+		offset = 7;
 	}
 
+	name = uwsgi_concat2(orig+offset, "");
 	len = strlen(name);
 	for(i=0;i<len;i++) {
 		if (name[i] == '.') {
@@ -1069,8 +1069,11 @@ void uwsgi_python_destroy_env_holy(struct wsgi_request *wsgi_req) {
 		// to equalise the refcount of the environ
 		PyDict_DelItemString(up.embedded_dict, "env");
 	}
+	// avoid to decref environ if it is mapped to the python callable
+	if (PyTuple_GetItem(wsgi_req->async_args, 0) != wsgi_req->async_environ) {
+		Py_DECREF((PyObject *)wsgi_req->async_environ);
+        }
 	Py_DECREF((PyObject *) wsgi_req->async_args);
-	Py_DECREF((PyObject *)wsgi_req->async_environ);
 }
 
 
@@ -1092,15 +1095,21 @@ void uwsgi_python_preinit_apps() {
                 exit(1);
         }
 
-	if (!up.wsgi_env_behaviour) {
-		up.wsgi_env_create = uwsgi_python_create_env_cheat;
-		up.wsgi_env_destroy = uwsgi_python_destroy_env_cheat;
+	if (up.wsgi_env_behaviour) {
+		if (!strcmp(up.wsgi_env_behaviour, "holy")) {
+			up.wsgi_env_create = uwsgi_python_create_env_holy;
+			up.wsgi_env_destroy = uwsgi_python_destroy_env_holy;
+		}
+		else if (!strcmp(up.wsgi_env_behaviour, "cheat")) {
+			up.wsgi_env_create = uwsgi_python_create_env_cheat;
+			up.wsgi_env_destroy = uwsgi_python_destroy_env_cheat;
+		}
+		else {
+			uwsgi_log("invalid wsgi-env-behaviour value: %s\n", up.wsgi_env_behaviour);
+			exit(1);
+		}
 	}
-	else if (!strcmp(up.wsgi_env_behaviour, "holy")) {
-		up.wsgi_env_create = uwsgi_python_create_env_holy;
-		up.wsgi_env_destroy = uwsgi_python_destroy_env_holy;
-	}
-	else if (!strcmp(up.wsgi_env_behaviour, "cheat")) {
+	else {
 		up.wsgi_env_create = uwsgi_python_create_env_cheat;
 		up.wsgi_env_destroy = uwsgi_python_destroy_env_cheat;
 	}
@@ -1481,6 +1490,7 @@ void *uwsgi_python_autoreloader_thread(void *foobar) {
 			if (!PyObject_HasAttrString(mod, "__file__")) continue;
 			PyObject *mod_file = PyObject_GetAttrString(mod, "__file__");
 			if (!mod_file) continue;
+			if (mod_file == Py_None) continue;
 #ifdef PYTHREE
 			PyObject *zero = PyUnicode_AsUTF8String(mod_file);
 			char *mod_filename = PyString_AsString(zero);

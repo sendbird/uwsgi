@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '2.0.17.1'
+uwsgi_version = '2.0.19.1'
 
 import os
 import re
@@ -27,6 +27,10 @@ try:
 except:
     import configparser as ConfigParser
 
+try:
+    from shlex import quote
+except ImportError:
+    from pipes import quote
 
 PY3 = sys.version_info[0] == 3
 
@@ -203,11 +207,12 @@ int main()
 
 def spcall3(cmd):
     p = subprocess.Popen(cmd, shell=True, stdin=open('/dev/null'), stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    (out, err) = p.communicate()
 
-    if p.wait() == 0:
+    if p.returncode == 0:
         if sys.version_info[0] > 2:
-            return p.stderr.read().rstrip().decode()
-        return p.stderr.read().rstrip()
+            return err.rstrip().decode()
+        return err.rstrip()
     else:
         return None
 
@@ -592,7 +597,7 @@ def build_uwsgi(uc, print_only=False, gcll=None):
             t.join()
 
     print("*** uWSGI linking ***")
-    ldline = "%s -o %s %s %s %s" % (GCC, bin_name, ' '.join(uniq_warnings(ldflags)),
+    ldline = "%s -o %s %s %s %s" % (GCC, quote(bin_name), ' '.join(uniq_warnings(ldflags)),
         ' '.join(map(add_o, gcc_list)), ' '.join(uniq_warnings(libs)))
     print(ldline)
     ret = os.system(ldline)
