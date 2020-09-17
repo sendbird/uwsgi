@@ -154,6 +154,31 @@ static void uwsgi_websocket_parse_header(struct wsgi_request *wsgi_req) {
 	wsgi_req->websocket_size = byte2 & 0x7f;
 }
 
+static void uwsgi_log_soda_debug(char *ptr, struct wsgi_request *wsgi_req){
+	char printbuf[128];
+	const size_t cnt = 32;
+	char* buf = printbuf;
+	const size_t soc_len = wsgi_req->websocket_size;
+	
+	uwsgi_log("[SODA_DEBUG] FLAGS | FIN %d | OPCODE %d | LEN %d |\n", wsgi_req->websocket_is_fin, wsgi_req->websocket_opcode, soc_len);
+
+	size_t printcnt = cnt < soc_len ? cnt : soc_len;
+	for (size_t i=0;i<printcnt;i++) {
+		uint8_t byte = *(ptr+i) & 0xff;
+		buf += sprintf(buf, "%02X ", byte);
+	}
+	*buf = 0;
+	uwsgi_log("[SODA_DEBUG] first %d bytes [%04d-%04d] | %s |\n", cnt, 0, printcnt-1, printbuf);
+	
+	buf = printbuf;
+	for (size_t i=soc_len-printcnt; i<soc_len; i++) {
+		uint8_t byte = *(ptr+i) & 0xff;
+		buf += sprintf(buf, "%02X ", byte);
+	}
+	*buf = 0;
+	uwsgi_log("[SODA_DEBUG]  last %d bytes [%04d-%04d] | %s |\n", cnt, soc_len-printcnt, soc_len-1, printbuf);
+}
+
 static struct uwsgi_buffer *uwsgi_websockets_parse(struct wsgi_request *wsgi_req) {
 	// de-mask buffer
 	uint8_t *ptr = (uint8_t *) (wsgi_req->websocket_buf->buf + (wsgi_req->websocket_pktsize - wsgi_req->websocket_size));
@@ -177,6 +202,9 @@ static struct uwsgi_buffer *uwsgi_websockets_parse(struct wsgi_request *wsgi_req
 	else {
 		ub = uwsgi_buffer_new(wsgi_req->websocket_size);
 	}
+
+	if (wsgi_req->websocket_opcode == 0 || !wsgi_req->websocket_is_fin) uwsgi_log_soda_debug((char *) ptr, wsgi_req);
+
 	if (uwsgi_buffer_append(ub, (char *) ptr, wsgi_req->websocket_size)) goto error;	
 	if (uwsgi_buffer_decapitate(wsgi_req->websocket_buf, wsgi_req->websocket_pktsize)) goto error;
 	wsgi_req->websocket_phase = 0;
