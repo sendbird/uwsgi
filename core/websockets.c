@@ -58,6 +58,10 @@ static int uwsgi_websockets_pong(struct wsgi_request *wsgi_req) {
         return uwsgi_response_write_body_do(wsgi_req, uwsgi.websockets_pong->buf, uwsgi.websockets_pong->pos);
 }
 
+static int uwsgi_websockets_close(struct wsgi_request *wsgi_req) {
+        return uwsgi_response_write_body_do(wsgi_req, uwsgi.websockets_close->buf, uwsgi.websockets_close->pos);
+}
+
 static int uwsgi_websockets_check_pingpong(struct wsgi_request *wsgi_req) {
 	time_t now = uwsgi_now();
 	// first round
@@ -406,55 +410,55 @@ ssize_t uwsgi_websockets_simple_send(struct wsgi_request *wsgi_req, struct uwsgi
 
 int uwsgi_websocket_handshake(struct wsgi_request *wsgi_req, char *key, uint16_t key_len, char *origin, uint16_t origin_len, char *proto, uint16_t proto_len) {
 #ifdef UWSGI_SSL
-	if (!key_len) {
-		key = wsgi_req->http_sec_websocket_key;
-		key_len = wsgi_req->http_sec_websocket_key_len;
-	}
-	if (key_len == 0) return -1;
+    if (!key_len) {
+        key = wsgi_req->http_sec_websocket_key;
+        key_len = wsgi_req->http_sec_websocket_key_len;
+    }
+    if (key_len == 0) return -11;
 
-	char sha1[20];
-	if (uwsgi_response_prepare_headers(wsgi_req, "101 Web Socket Protocol Handshake", 33)) return -1;
-	if (uwsgi_response_add_header(wsgi_req, "Upgrade", 7, "WebSocket", 9)) return -1;
-	if (uwsgi_response_add_header(wsgi_req, "Connection", 10, "Upgrade", 7)) return -1;
+    char sha1[20];
+    if (uwsgi_response_prepare_headers(wsgi_req, "101 Web Socket Protocol Handshake", 33)) return -12;
+    if (uwsgi_response_add_header(wsgi_req, "Upgrade", 7, "WebSocket", 9)) return -13;
+    if (uwsgi_response_add_header(wsgi_req, "Connection", 10, "Upgrade", 7)) return -14;
 
-	// if origin was requested or proto_len is specified, send it back
-        if (wsgi_req->http_origin_len > 0 || origin_len > 0) {
-		if (!origin_len) {
-			origin = wsgi_req->http_origin;
-			origin_len = wsgi_req->http_origin_len;
-		}
-		if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Origin", 20, origin, origin_len)) return -1;
+    // if origin was requested or proto_len is specified, send it back
+    if (wsgi_req->http_origin_len > 0 || origin_len > 0) {
+        if (!origin_len) {
+            origin = wsgi_req->http_origin;
+            origin_len = wsgi_req->http_origin_len;
         }
-        else {
-		if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Origin", 20, "*", 1)) return -1;
+        if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Origin", 20, origin, origin_len)) return -15;
+    }
+    else {
+        if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Origin", 20, "*", 1)) return -16;
+    }
+
+    // if protocol was requested or proto_len is specified, send it back
+    if (wsgi_req->http_sec_websocket_protocol_len > 0 || proto_len > 0) {
+        if (!proto_len) {
+            proto = wsgi_req->http_sec_websocket_protocol;
+            proto_len = wsgi_req->http_sec_websocket_protocol_len;
         }
-	
-	// if protocol was requested or proto_len is specified, send it back
-	if (wsgi_req->http_sec_websocket_protocol_len > 0 || proto_len > 0) {
-		if (!proto_len) {
-			proto = wsgi_req->http_sec_websocket_protocol;
-			proto_len = wsgi_req->http_sec_websocket_protocol_len;
-		}
-		if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Protocol", 22, proto, proto_len)) return -1;
-	}
-	// generate websockets sha1 and encode it to base64
-        if (!uwsgi_sha1_2n(key, key_len, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36, sha1)) return -1;
-	size_t b64_len = 0;
-        char *b64 = uwsgi_base64_encode(sha1, 20, &b64_len);
-	if (!b64) return -1;
+        if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Protocol", 22, proto, proto_len)) return -17;
+    }
+    // generate websockets sha1 and encode it to base64
+    if (!uwsgi_sha1_2n(key, key_len, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36, sha1)) return -18;
+    size_t b64_len = 0;
+    char *b64 = uwsgi_base64_encode(sha1, 20, &b64_len);
+    if (!b64) return -19;
 
-	if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Accept", 20, b64, b64_len)) {
-		free(b64);
-		return -1;
-	}
-	free(b64);
+    if (uwsgi_response_add_header(wsgi_req, "Sec-WebSocket-Accept", 20, b64, b64_len)) {
+        free(b64);
+        return -20;
+    }
+    free(b64);
 
-	wsgi_req->websocket_last_pong = uwsgi_now();
+    wsgi_req->websocket_last_pong = uwsgi_now();
 
-	return uwsgi_response_write_headers_do(wsgi_req);
+    return uwsgi_response_write_headers_do(wsgi_req);
 #else
-	uwsgi_log("you need to build uWSGI with SSL support to use the websocket handshake api function !!!\n");
-	return -1;
+    uwsgi_log("you need to build uWSGI with SSL support to use the websocket handshake api function !!!\n");
+    return -1;
 #endif
 }
 
@@ -465,7 +469,7 @@ void uwsgi_websockets_init() {
         uwsgi_buffer_append(uwsgi.websockets_ping, "\x89\0", 2);
         uwsgi.websockets_close = uwsgi_buffer_new(2);
         uwsgi_buffer_append(uwsgi.websockets_close, "\x88\0", 2);
-	uwsgi.websockets_ping_freq = 30;
+       	uwsgi.websockets_ping_freq = 30;
 	uwsgi.websockets_pong_tolerance = 3;
 	uwsgi.websockets_max_size = 1024;
 }

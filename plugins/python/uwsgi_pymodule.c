@@ -1013,7 +1013,7 @@ PyObject *py_uwsgi_websocket_handshake(PyObject * self, PyObject * args) {
 	UWSGI_GET_GIL
 
 	if (ret) {
-		return PyErr_Format(PyExc_IOError, "unable to complete websocket handshake");
+		return PyErr_Format(PyExc_IOError, "unable to complete websocket handshake %d", ret);
 	}
 
 	Py_INCREF(Py_None);
