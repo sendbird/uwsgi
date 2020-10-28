@@ -148,7 +148,6 @@ int uwsgi_websocket_send_binary_from_sharedarea(struct wsgi_request *wsgi_req, i
 static void uwsgi_websocket_parse_header(struct wsgi_request *wsgi_req) {
 	uint8_t byte1 = wsgi_req->websocket_buf->buf[0];
 	uint8_t byte2 = wsgi_req->websocket_buf->buf[1];
-	wsgi_req->websocket_is_fin = byte1 >> 7;
 	wsgi_req->websocket_opcode = byte1 & 0xf;
 	wsgi_req->websocket_has_mask = byte2 >> 7;
 	wsgi_req->websocket_size = byte2 & 0x7f;
@@ -160,7 +159,7 @@ static void uwsgi_log_soda_debug(char *ptr, struct wsgi_request *wsgi_req, int d
 	char* buf = printbuf;
 	const size_t soc_len = wsgi_req->websocket_size;
 	
-	uwsgi_log("[SODA_DEBUG #%d] FLAGS | FIN %d | OPCODE %d | LEN %d |\n", debug_no, wsgi_req->websocket_is_fin, wsgi_req->websocket_opcode, soc_len);
+	uwsgi_log("[SODA_DEBUG #%d] FLAGS | OPCODE %d | LEN %d |\n", debug_no, wsgi_req->websocket_opcode, soc_len);
 
 	size_t printcnt = cnt < soc_len ? cnt : soc_len;
 	for (size_t i=0;i<printcnt;i++) {
@@ -191,41 +190,16 @@ static struct uwsgi_buffer *uwsgi_websockets_parse(struct wsgi_request *wsgi_req
 		}
 	}
 
-	struct uwsgi_buffer *ub = NULL;
-	if (wsgi_req->websocket_opcode == 0) {
-		if (uwsgi.websockets_continuation_buffer == NULL) {
-			uwsgi_log("Error continuation with empty previous buffer");
-			goto error;
-		}
-		ub = uwsgi.websockets_continuation_buffer;
-	}
-	else {
-		ub = uwsgi_buffer_new(wsgi_req->websocket_size);
-	}
-
+	struct uwsgi_buffer *ub = uwsgi_buffer_new(wsgi_req->websocket_size);
 	if (uwsgi_buffer_append(ub, (char *) ptr, wsgi_req->websocket_size)) goto error;	
 	if (uwsgi_buffer_decapitate(wsgi_req->websocket_buf, wsgi_req->websocket_pktsize)) goto error;
 	wsgi_req->websocket_phase = 0;
 	wsgi_req->websocket_need = 2;
 
-	if (wsgi_req->websocket_is_fin) {
-		uwsgi.websockets_continuation_buffer = NULL;
-		uwsgi_log_soda_debug((char *) ptr, wsgi_req, 1);
-		/// Freeing websockets_continuation_buffer is done by the caller
-		return ub;
-	}
-	uwsgi.websockets_continuation_buffer = ub;
-	/// Message is not complete, send empty dummy buffer to signal waiting for full message
-	ub = uwsgi_buffer_new(1);
-	uwsgi_buffer_append(ub, "\0", 1);
 	return ub;
 error:
 	/// avoid segfault
 	if (ub) uwsgi_buffer_destroy(ub);
-	if (uwsgi.websockets_continuation_buffer != NULL && ub != uwsgi.websockets_continuation_buffer) {
-		uwsgi_buffer_destroy(uwsgi.websockets_continuation_buffer);
-	}
-	uwsgi.websockets_continuation_buffer = NULL;
 	uwsgi_log_soda_debug((char *) ptr, wsgi_req, 2);
 
 	return NULL;
@@ -398,20 +372,12 @@ static struct uwsgi_buffer *uwsgi_websocket_recv_do(struct wsgi_request *wsgi_re
 	return NULL;
 }
 
-static void clear_continuation_buffer() {
-	if (uwsgi.websockets_continuation_buffer != NULL) {
-		uwsgi_buffer_destroy(uwsgi.websockets_continuation_buffer);
-		uwsgi.websockets_continuation_buffer = NULL;
-	}
-}
-
 struct uwsgi_buffer *uwsgi_websocket_recv(struct wsgi_request *wsgi_req) {
 	if (wsgi_req->websocket_closed) {
 		return NULL;
 	}
 	struct uwsgi_buffer *ub = uwsgi_websocket_recv_do(wsgi_req, 0);
 	if (!ub) {
-		clear_continuation_buffer();
 		wsgi_req->websocket_closed = 1;
 	}
 	return ub;
@@ -423,7 +389,6 @@ struct uwsgi_buffer *uwsgi_websocket_recv_nb(struct wsgi_request *wsgi_req) {
         }
         struct uwsgi_buffer *ub = uwsgi_websocket_recv_do(wsgi_req, 1);
         if (!ub) {
-		clear_continuation_buffer();
                 wsgi_req->websocket_closed = 1;
         }
         return ub;
@@ -503,5 +468,4 @@ void uwsgi_websockets_init() {
 	uwsgi.websockets_ping_freq = 30;
 	uwsgi.websockets_pong_tolerance = 3;
 	uwsgi.websockets_max_size = 1024;
-	uwsgi.websockets_continuation_buffer = NULL;
 }
