@@ -157,31 +157,6 @@ static void uwsgi_websocket_parse_header(struct wsgi_request *wsgi_req) {
 	wsgi_req->websocket_size = byte2 & 0x7f;
 }
 
-static void uwsgi_log_soda_debug(char *ptr, struct wsgi_request *wsgi_req, int debug_no){
-	char printbuf[128];
-	const size_t cnt = 32;
-	char* buf = printbuf;
-	const size_t soc_len = wsgi_req->websocket_size;
-	
-	uwsgi_log("[SODA_DEBUG #%d] FLAGS | OPCODE %d | LEN %d |\n", debug_no, wsgi_req->websocket_opcode, soc_len);
-
-	size_t printcnt = cnt < soc_len ? cnt : soc_len;
-	for (size_t i=0;i<printcnt;i++) {
-		uint8_t byte = *(ptr+i) & 0xff;
-		buf += sprintf(buf, "%02X ", byte);
-	}
-	*buf = 0;
-	uwsgi_log("[SODA_DEBUG #%d] first %d bytes [%04d-%04d] | %s |\n", debug_no, cnt, 0, printcnt-1, printbuf);
-	
-	buf = printbuf;
-	for (size_t i=soc_len-printcnt; i<soc_len; i++) {
-		uint8_t byte = *(ptr+i) & 0xff;
-		buf += sprintf(buf, "%02X ", byte);
-	}
-	*buf = 0;
-	uwsgi_log("[SODA_DEBUG #%d]  last %d bytes [%04d-%04d] | %s |\n", debug_no, cnt, soc_len-printcnt, soc_len-1, printbuf);
-}
-
 static struct uwsgi_buffer *uwsgi_websockets_parse(struct wsgi_request *wsgi_req) {
 	// de-mask buffer
 	uint8_t *ptr = (uint8_t *) (wsgi_req->websocket_buf->buf + (wsgi_req->websocket_pktsize - wsgi_req->websocket_size));
@@ -204,7 +179,6 @@ static struct uwsgi_buffer *uwsgi_websockets_parse(struct wsgi_request *wsgi_req
 error:
 	/// avoid segfault
 	if (ub) uwsgi_buffer_destroy(ub);
-	uwsgi_log_soda_debug((char *) ptr, wsgi_req, 2);
 
 	return NULL;
 }
@@ -463,13 +437,13 @@ int uwsgi_websocket_handshake(struct wsgi_request *wsgi_req, char *key, uint16_t
 }
 
 void uwsgi_websockets_init() {
-        uwsgi.websockets_pong = uwsgi_buffer_new(2);
-        uwsgi_buffer_append(uwsgi.websockets_pong, "\x8A\0", 2);
-        uwsgi.websockets_ping = uwsgi_buffer_new(2);
-        uwsgi_buffer_append(uwsgi.websockets_ping, "\x89\0", 2);
-        uwsgi.websockets_close = uwsgi_buffer_new(2);
-        uwsgi_buffer_append(uwsgi.websockets_close, "\x88\0", 2);
-       	uwsgi.websockets_ping_freq = 30;
+	uwsgi.websockets_pong = uwsgi_buffer_new(2);
+	uwsgi_buffer_append(uwsgi.websockets_pong, "\x8A\0", 2);
+	uwsgi.websockets_ping = uwsgi_buffer_new(2);
+	uwsgi_buffer_append(uwsgi.websockets_ping, "\x89\0", 2);
+	uwsgi.websockets_close = uwsgi_buffer_new(2);
+	uwsgi_buffer_append(uwsgi.websockets_close, "\x88\0", 2);
+    uwsgi.websockets_ping_freq = 30;
 	uwsgi.websockets_pong_tolerance = 3;
 	uwsgi.websockets_max_size = 1024;
 }
