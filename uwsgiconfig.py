@@ -1357,6 +1357,9 @@ class uConf(object):
         if self.get('unbit'):
             self.cflags.append("-DUNBIT")
 
+        # add debug symbol
+        self.cflags.append("-g")
+
         return self.gcc_list, self.cflags, self.ldflags, self.libs
 
 def build_plugin(path, uc, cflags, ldflags, libs, name = None):
