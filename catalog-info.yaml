@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: uwsgi
+  description: uWSGI
+  annotations:
+    github.com/project-slug: sendbird/uwsgi
+spec:
+  type: library
+  lifecycle: production
+  owner: server-foundation-team
+  system: sendbird-chat
