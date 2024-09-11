@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '2.0.19.3'
+uwsgi_version = '2.0.19.4'
 
 import os
 import re
@@ -113,20 +113,20 @@ def thread_compiler(num):
         if objfile:
             print_lock.acquire()
             print_compilation_output("[thread %d][%s] %s" % (num, GCC, objfile), "[thread %d] %s" % (num, cmdline))
-            print_lock.release()    
+            print_lock.release()
             ret = os.system(cmdline)
             if ret != 0:
                 os._exit(1)
         elif cmdline:
-            print_lock.acquire()    
+            print_lock.acquire()
             print(cmdline)
-            print_lock.release()    
+            print_lock.release()
         else:
             return
 
 
-  
-	
+
+
 def binarize(name):
     return name.replace('/', '_').replace('.','_').replace('-','_')
 
@@ -239,7 +239,7 @@ def push_command(objfile, cmdline):
             sys.exit(1)
     else:
         compile_queue.put((objfile, cmdline))
-        
+
 
 def compile(cflags, last_cflags_ts, objfile, srcfile):
     source_stat = os.stat(srcfile)
@@ -332,7 +332,7 @@ def build_uwsgi(uc, print_only=False, gcll=None):
         uwsgi_cflags = ' '.join(cflags).encode('hex')
 
     last_cflags_ts = 0
-    
+
     if os.path.exists('uwsgibuild.lastcflags'):
             ulc = open('uwsgibuild.lastcflags','r')
             last_cflags = ulc.read()
@@ -341,7 +341,7 @@ def build_uwsgi(uc, print_only=False, gcll=None):
                 os.environ['UWSGI_FORCE_REBUILD'] = '1'
             else:
                 last_cflags_ts = os.stat('uwsgibuild.lastcflags')[8]
-            
+
 
     ulc = open('uwsgibuild.lastcflags','w')
     ulc.write(uwsgi_cflags)
@@ -364,7 +364,7 @@ def build_uwsgi(uc, print_only=False, gcll=None):
     else:
         uwsgi_dot_h = uwsgi_dot_h_content.encode('hex')
     open('core/dot_h.c', 'w').write('char *uwsgi_dot_h = "%s";\n' % uwsgi_dot_h);
-    gcc_list.append('core/dot_h') 
+    gcc_list.append('core/dot_h')
 
     # embed uwsgiconfig.py in the server binary. It increases the binary size, but will be very useful
     # if possibile, the blob is compressed
@@ -408,7 +408,7 @@ def build_uwsgi(uc, print_only=False, gcll=None):
         if not objfile.endswith('.a') and not objfile.endswith('.o'):
             if objfile.endswith('.c') or objfile.endswith('.cc') or objfile.endswith('.m') or objfile.endswith('.go'):
                 if objfile.endswith('.go'):
-                    cflags.append('-Wno-error') 
+                    cflags.append('-Wno-error')
                 compile(' '.join(cflags), last_cflags_ts, objfile + '.o', file)
                 if objfile.endswith('.go'):
                     cflags.pop()
@@ -462,14 +462,14 @@ def build_uwsgi(uc, print_only=False, gcll=None):
                     path = os.path.dirname(path)
                     up['GCC_LIST'] = [bname]
                     up['NAME'] = bname.split('.')[0]
-                    if not path: path = '.' 
+                    if not path: path = '.'
                 elif os.path.isdir(path):
                     try:
                         execfile('%s/uwsgiplugin.py' % path, up)
                     except:
                         f = open('%s/uwsgiplugin.py' % path)
                         exec(f.read(), up)
-                        f.close() 
+                        f.close()
                 else:
                     print("Error: plugin '%s' not found" % p)
                     sys.exit(1)
@@ -695,7 +695,7 @@ class uConf(object):
             try:
                 lk_ver = uwsgi_os_k.split('.')
                 if int(lk_ver[0]) <= 2 and int(lk_ver[1]) <= 6 and int(lk_ver[2]) <= 9:
-                    self.cflags.append('-DOBSOLETE_LINUX_KERNEL')                    
+                    self.cflags.append('-DOBSOLETE_LINUX_KERNEL')
                     report['kernel'] = 'Old Linux'
             except:
                 pass
@@ -721,9 +721,9 @@ class uConf(object):
                     add_it = False
                 elif add_it:
                     self.include_path.append(line.strip().split()[0])
-            
+
             if not self.include_path:
-                raise 
+                raise
         except:
             self.include_path = ['/usr/include', '/usr/local/include']
 
@@ -739,7 +739,7 @@ class uConf(object):
                 except:
                     pass
 
-            
+
         if not mute:
             print("detected include path: %s" % self.include_path)
 
@@ -1108,7 +1108,7 @@ class uConf(object):
             if self.get('routing') == 'auto':
                 if has_pcre:
                     self.gcc_list.append('core/routing')
-                    self.cflags.append("-DUWSGI_ROUTING") 
+                    self.cflags.append("-DUWSGI_ROUTING")
                     report['routing'] = True
             else:
                 self.gcc_list.append('core/routing')
@@ -1181,8 +1181,8 @@ class uConf(object):
                                 objcopy_cmd = "objcopy --redefine-sym _binary_%s_%s=_binary_%s_%s build/%s.o" % (binarize(ef), kind, binarize(symbase), kind, binarize(ef))
                                 print(objcopy_cmd)
                                 os.system(objcopy_cmd)
-                
-                 
+
+
 
         self.cflags.append('-DUWSGI_VERSION="\\"' + uwsgi_version + '\\""')
 
@@ -1204,7 +1204,7 @@ class uConf(object):
 
         if len(uver_dots) > 3:
             uver_rev = uver_dots[3]
-        
+
 
         self.cflags.append('-DUWSGI_VERSION_BASE="' + uver_base + '"')
         self.cflags.append('-DUWSGI_VERSION_MAJOR="' + uver_maj + '"')
@@ -1289,8 +1289,8 @@ class uConf(object):
                 else:
                     print("*** yajl headers unavailable. uWSGI build is interrupted. You have to install yajl development package or use jansson or disable JSON")
                     sys.exit(1)
-        
-                
+
+
         if self.get('ssl'):
             if self.get('ssl') == 'auto':
                 if self.has_include('openssl/ssl.h'):
@@ -1455,7 +1455,7 @@ def build_plugin(path, uc, cflags, ldflags, libs, name = None):
         shared_flag = '-dynamiclib -undefined dynamic_lookup'
 
     for cfile in up['GCC_LIST']:
-        if cfile.endswith('.a'): 
+        if cfile.endswith('.a'):
             gcc_list.append(cfile)
         elif not cfile.endswith('.c') and not cfile.endswith('.cc') and not cfile.endswith('.m') and not cfile.endswith('.go') and not cfile.endswith('.o'):
             gcc_list.append(path + '/' + cfile + '.c')
