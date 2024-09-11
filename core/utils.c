@@ -1193,7 +1193,7 @@ void uwsgi_close_request(struct wsgi_request *wsgi_req) {
 	    && (end_of_request - (uwsgi.workers[uwsgi.mywid].last_spawn * 1000000) >= uwsgi.min_worker_lifetime * 1000000)) {
 		goodbye_cruel_world("max requests reached (%llu >= %llu)",
 			(unsigned long long) uwsgi.workers[uwsgi.mywid].delta_requests,
-			(unsigned long long) (uwsgi.max_requests + ((uwsgi.mywid-1) * uwsgi.max_requests_delta))
+			(unsigned long long) uwsgi.max_requests
 		);
 	}
 
