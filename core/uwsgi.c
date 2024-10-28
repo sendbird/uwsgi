@@ -2078,6 +2078,7 @@ static char *uwsgi_at_file_read(char *filename) {
 }
 
 void uwsgi_setup(int argc, char *argv[], char *envp[]) {
+    uwsgi_log("[%d]uwsgi_setup() called\n", getpid());
 	int i;
 
 	struct utsname uuts;
@@ -3330,7 +3331,7 @@ void *mem_collector(void *foobar) {
 }
 
 int uwsgi_run() {
-
+    uwsgi_log("[%d]uwsgi_run is called\n", getpid());
 	// !!! from now on, we could be in the master or in a worker !!!
 	int i;
 
@@ -3499,6 +3500,7 @@ void uwsgi_worker_run() {
 	if (uwsgi.harakiri_options.workers > 0 && !uwsgi.master_process) {
 		signal(SIGALRM, (void *) &harakiri);
 	}
+	uwsgi_log("[%d]Registering SIGHUP handler here inside the worker\n", getpid());
 	uwsgi_unix_signal(SIGHUP, gracefully_kill);
 	uwsgi_unix_signal(SIGINT, end_me);
 	uwsgi_unix_signal(SIGTERM, end_me);
@@ -3812,7 +3814,7 @@ initialize all apps
 
 */
 void uwsgi_init_all_apps() {
-
+    uwsgi_log("uwsgi_init_all_apps() called\n");
 	int i, j;
 
 	uwsgi_hooks_run(uwsgi.hook_pre_app, "pre app", 1);

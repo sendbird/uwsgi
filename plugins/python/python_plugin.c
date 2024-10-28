@@ -78,7 +78,7 @@ void uwsgi_opt_ini_paste(char *opt, char *value, void *foobar) {
 	if (!strcmp("ini-paste-logged", opt)) {
 		up.paste_logger = 1;
 	}
-	
+
 }
 
 struct uwsgi_option uwsgi_python_options[] = {
@@ -229,7 +229,7 @@ int uwsgi_python_init() {
 
 		// build the PYTHONHOME wchar path
 		wchar_t *wpyhome;
-		size_t len = strlen(up.home) + 1; 
+		size_t len = strlen(up.home) + 1;
 		wpyhome = uwsgi_calloc(sizeof(wchar_t) * len );
 		if (!wpyhome) {
 			uwsgi_error("malloc()");
@@ -287,7 +287,7 @@ ready:
 
         up.swap_ts = simple_swap_ts;
         up.reset_ts = simple_reset_ts;
-	
+
 #if defined(PYTHREE) || defined(Py_TPFLAGS_HAVE_NEWBUFFER)
 	struct uwsgi_string_list *usl = NULL;
 	uwsgi_foreach(usl, up.sharedarea) {
@@ -394,7 +394,7 @@ void uwsgi_python_post_fork() {
 
 	if (uwsgi.i_am_a_spooler) {
 		UWSGI_GET_GIL
-	}	
+	}
 
 	// reset python signal flags so child processes can trap signals
 	if (up.call_osafterfork) {
@@ -1027,7 +1027,7 @@ void uwsgi_python_spooler_init(void) {
         }
 
 	UWSGI_RELEASE_GIL
-	
+
 
 }
 
@@ -1137,6 +1137,7 @@ void uwsgi_python_preinit_apps() {
 }
 
 void uwsgi_python_init_apps() {
+    uwsgi_log("uwsgi_python_init_apps called()\n");
 
 	// lazy ?
 	if (uwsgi.mywid > 0) {
@@ -1281,7 +1282,7 @@ void uwsgi_python_master_fixup(int step) {
 				UWSGI_RELEASE_GIL;
 				master_fixed = 1;
 			}
-		}	
+		}
 		else {
 			if (!worker_fixed) {
 				UWSGI_GET_GIL;
@@ -1318,10 +1319,10 @@ void uwsgi_python_enable_threads() {
 		up.reset_ts = threaded_reset_ts;
 	}
 
-	
+
 
 	uwsgi_log("python threads support enabled\n");
-	
+
 
 }
 
@@ -1368,14 +1369,14 @@ void uwsgi_python_init_thread(int core_id) {
 	UWSGI_GET_GIL;
 	uwsgi_python_set_thread_name(core_id);
 	UWSGI_RELEASE_GIL;
-	
+
 
 }
 
 int uwsgi_check_python_mtime(PyObject *times_dict, char *filename) {
 	struct stat st;
 
-	PyObject *py_mtime = PyDict_GetItemString(times_dict, filename); 
+	PyObject *py_mtime = PyDict_GetItemString(times_dict, filename);
 	if (!py_mtime) {
 		if (stat(filename, &st)) {
 			return 0;
@@ -1569,7 +1570,7 @@ char *uwsgi_python_code_string(char *id, char *code, char *function, char *key, 
 		UWSGI_RELEASE_GIL;
 		return NULL;
 	}
-	
+
 	PyObject *func = PyDict_GetItemString(cs_dict, function);
 	if (!func) {
 		uwsgi_log("function %s not available in %s\n", function, code);
@@ -1592,7 +1593,7 @@ char *uwsgi_python_code_string(char *id, char *code, char *function, char *key, 
 
 	UWSGI_RELEASE_GIL;
 	return NULL;
-	
+
 }
 
 int uwsgi_python_signal_handler(uint8_t sig, void *handler) {
@@ -1706,7 +1707,7 @@ int uwsgi_python_spooler(char *filename, char *buf, uint16_t len, char *body, si
 
 	if (!random_seed_reset) {
 		uwsgi_python_reset_random_seed();
-		random_seed_reset = 1;	
+		random_seed_reset = 1;
 	}
 
 	if (!up.embedded_dict) {
@@ -1799,7 +1800,7 @@ void uwsgi_python_hijack(void) {
 			uwsgi_error_open(up.pyrun);
 			exit(1);
 		}
-		PyRun_SimpleFile(pyfile, up.pyrun);	
+		PyRun_SimpleFile(pyfile, up.pyrun);
 		// could be never executed
 		exit(0);
 	}
@@ -1864,7 +1865,7 @@ int uwsgi_python_mule(char *opt) {
 		return 1;
 	}
 	return 0;
-	
+
 }
 
 int uwsgi_python_mule_msg(char *message, size_t len) {
