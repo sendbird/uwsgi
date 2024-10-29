@@ -1247,7 +1247,6 @@ end:
 
 
 void gracefully_kill(int signum) {
-
 	uwsgi_log("Gracefully killing worker %d (pid: %d)...\n", uwsgi.mywid, uwsgi.mypid);
 	uwsgi.workers[uwsgi.mywid].manage_next_request = 0;
 	if (uwsgi.threads > 1) {

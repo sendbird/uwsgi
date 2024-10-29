@@ -1137,12 +1137,14 @@ void uwsgi_python_preinit_apps() {
 }
 
 void uwsgi_python_init_apps() {
-    uwsgi_log("uwsgi_python_init_apps called()\n");
+    uwsgi_log("[%d] uwsgi_python_init_apps called()\n", getpid());
 
 	// lazy ?
 	if (uwsgi.mywid > 0) {
 		UWSGI_GET_GIL;
 	}
+
+	uwsgi_log("[%d] UWSGI_GET_GIL called()\n", getpid());
 
 	// prepare for stack suspend/resume
 	if (uwsgi.async > 1) {
@@ -1173,7 +1175,7 @@ void uwsgi_python_init_apps() {
 		}
 		upli = upli->next;
 	}
-
+	uwsgi_log("[%d] after import_list\n", getpid());
 	struct uwsgi_string_list *uppa = up.post_pymodule_alias;
 	PyObject *modules = PyImport_GetModuleDict();
 	PyObject *tmp_module;
@@ -1262,11 +1264,12 @@ next:
 			Py_INCREF(up.after_req_hook_args);
 		}
 	}
+    uwsgi_log("[%d] before UWSGI_RELEASE_GIL\n", getpid());
 	// lazy ?
 	if (uwsgi.mywid > 0) {
 		UWSGI_RELEASE_GIL;
 	}
-
+	uwsgi_log("[%d] after UWSGI_RELEASE_GIL\n", getpid());
 }
 
 void uwsgi_python_master_fixup(int step) {
