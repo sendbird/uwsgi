@@ -2,9 +2,9 @@ name: Compile test
 
 on:
   push:
-    branches: [ master, uwsgi-2.0 ]
+    branches: [ master, uwsgi-2.0, uwsgi-2.0-sendbird ]
   pull_request:
-    branches: [ master, uwsgi-2.0 ]
+    branches: [ master, uwsgi-2.0, uwsgi-2.0-sendbird ]
 
 jobs:
   build:
