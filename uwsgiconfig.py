@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '2.0.28-sendbird'
+uwsgi_version = '2.0.28.1'
 
 import os
 import re
