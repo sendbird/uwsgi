@@ -59,6 +59,10 @@ static int uwsgi_websockets_close(struct wsgi_request *wsgi_req) {
 }
 
 static int uwsgi_websockets_check_pingpong(struct wsgi_request *wsgi_req) {
+	// disable ping/pong if frequency is negative
+	if (uwsgi.websockets_ping_freq < 0) {
+		return 0;
+	}
 	time_t now = uwsgi_now();
 	// first round
 	if (wsgi_req->websocket_last_ping == 0) {
@@ -203,7 +207,7 @@ static ssize_t uwsgi_websockets_recv_pkt(struct wsgi_request *wsgi_req, int nb) 
                 }
 
 wait:
-                ret = uwsgi.wait_read_hook(wsgi_req->fd, uwsgi.websockets_ping_freq);
+                ret = uwsgi.wait_read_hook(wsgi_req->fd, uwsgi.websockets_ping_freq >= 0);
                 if (ret > 0) {
 			rlen = wsgi_req->socket->proto_read_body(wsgi_req, wsgi_req->websocket_buf->buf + wsgi_req->websocket_buf->pos, wsgi_req->websocket_buf->len - wsgi_req->websocket_buf->pos);
 			if (rlen > 0) return rlen;

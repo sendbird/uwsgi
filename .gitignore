@@ -27,3 +27,7 @@ core/dot_h.c
 /build/
 /dist/
 /uWSGI.egg-info/
+
+# Editor/IDE files
+.ccls
+.serena/

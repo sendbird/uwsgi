@@ -54,15 +54,19 @@ int uwsgi_gevent_wait_write_hook(int fd, int timeout) {
 int uwsgi_gevent_wait_read_hook(int fd, int timeout) {
 
         PyObject *ret = NULL;
+        PyObject *timer = NULL;
 
-        /// create a watcher for writes
+        /// create a watcher for reads
         PyObject *watcher = PyObject_CallMethod(ugevent.hub_loop, "io", "ii", fd, 1);
         if (!watcher) return -1;
 
-        PyObject *timer = PyObject_CallMethod(ugevent.hub_loop, "timer", "i", timeout);
-        if (!timer) {
-                Py_DECREF(watcher);
-                return -1;
+        // Only create timer if timeout >= 0 (negative means wait forever)
+        if (timeout >= 0) {
+                timer = PyObject_CallMethod(ugevent.hub_loop, "timer", "i", timeout);
+                if (!timer) {
+                        Py_DECREF(watcher);
+                        return -1;
+                }
         }
 
         PyObject *current_greenlet = GET_CURRENT_GREENLET;
@@ -75,12 +79,15 @@ int uwsgi_gevent_wait_read_hook(int fd, int timeout) {
         }
         Py_DECREF(ret);
 
-        ret = PyObject_CallMethod(timer, "start", "OO", current, timer);
-        if (!ret) {
-                stop_the_watchers_and_clear
-                return -1;
+        // Only start timer if created
+        if (timer) {
+                ret = PyObject_CallMethod(timer, "start", "OO", current, timer);
+                if (!ret) {
+                        stop_the_watchers_and_clear
+                        return -1;
+                }
+                Py_DECREF(ret);
         }
-        Py_DECREF(ret);
 
         ret = PyObject_CallMethod(ugevent.hub, "switch", NULL);
         if (!ret) {
