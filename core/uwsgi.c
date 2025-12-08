@@ -869,8 +869,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"error-page-404", required_argument, 0, "add an error page (html) for managed 404 response", uwsgi_opt_add_string_list, &uwsgi.error_page_404, 0},
 	{"error-page-500", required_argument, 0, "add an error page (html) for managed 500 response", uwsgi_opt_add_string_list, &uwsgi.error_page_500, 0},
 
-	{"websockets-ping-freq", required_argument, 0, "set the frequency (in seconds) of websockets automatic ping packets", uwsgi_opt_set_int, &uwsgi.websockets_ping_freq, 0},
-	{"websocket-ping-freq", required_argument, 0, "set the frequency (in seconds) of websockets automatic ping packets", uwsgi_opt_set_int, &uwsgi.websockets_ping_freq, 0},
+	{"websockets-ping-freq", required_argument, 0, "set the frequency (in seconds) of websockets automatic ping packets (negative value disables pings)", uwsgi_opt_set_rawint, &uwsgi.websockets_ping_freq, 0},
+	{"websocket-ping-freq", required_argument, 0, "set the frequency (in seconds) of websockets automatic ping packets (negative value disables pings)", uwsgi_opt_set_rawint, &uwsgi.websockets_ping_freq, 0},
 
 	{"websockets-pong-tolerance", required_argument, 0, "set the tolerance (in seconds) of websockets ping/pong subsystem", uwsgi_opt_set_int, &uwsgi.websockets_pong_tolerance, 0},
 	{"websocket-pong-tolerance", required_argument, 0, "set the tolerance (in seconds) of websockets ping/pong subsystem", uwsgi_opt_set_int, &uwsgi.websockets_pong_tolerance, 0},
