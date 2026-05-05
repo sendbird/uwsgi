@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '2.0.28.2'
+uwsgi_version = '2.0.31.2'
 
 import os
 import re
@@ -535,7 +535,7 @@ def build_uwsgi(uc, print_only=False, gcll=None):
                         gcc_list.append('%s/%s' % (path, cfile))
                 for bfile in up.get('BINARY_LIST', []):
                     try:
-                        binary_link_cmd = "ld -r -b binary -o %s/%s.o %s/%s" % (path, bfile[1], path, bfile[1])
+                        binary_link_cmd = "ld -z noexecstack -r -b binary -o %s/%s.o %s/%s" % (path, bfile[1], path, bfile[1])
                         print(binary_link_cmd)
                         if subprocess.call(binary_link_cmd, shell=True) != 0:
                             raise Exception('unable to link binary file')
@@ -1150,7 +1150,7 @@ class uConf(object):
             if not self.embed_config:
                 self.embed_config = self.get('embed_config')
             if self.embed_config:
-                binary_link_cmd = "ld -r -b binary -o %s.o %s" % (binarize(self.embed_config), self.embed_config)
+                binary_link_cmd = "ld -z noexecstack -r -b binary -o %s.o %s" % (binarize(self.embed_config), self.embed_config)
                 print(binary_link_cmd)
                 subprocess.call(binary_link_cmd, shell=True)
                 self.cflags.append("-DUWSGI_EMBED_CONFIG=_binary_%s_start" % binarize(self.embed_config))
@@ -1169,7 +1169,7 @@ class uConf(object):
                         for directory, directories, files in os.walk(ef):
                             for f in files:
                                 fname = "%s/%s" % (directory, f)
-                                binary_link_cmd = "ld -r -b binary -o %s.o %s" % (binarize(fname), fname)
+                                binary_link_cmd = "ld -z noexecstack -r -b binary -o %s.o %s" % (binarize(fname), fname)
                                 print(binary_link_cmd)
                                 subprocess.call(binary_link_cmd, shell=True)
                                 if symbase:
@@ -1179,7 +1179,7 @@ class uConf(object):
                                         subprocess.call(objcopy_cmd, shell=True)
                                 binary_list.append(binarize(fname))
                     else:
-                        binary_link_cmd = "ld -r -b binary -o %s.o %s" % (binarize(ef), ef)
+                        binary_link_cmd = "ld -z noexecstack -r -b binary -o %s.o %s" % (binarize(ef), ef)
                         print(binary_link_cmd)
                         subprocess.call(binary_link_cmd, shell=True)
                         binary_list.append(binarize(ef))
@@ -1315,10 +1315,10 @@ class uConf(object):
 
         if self.get('xml'):
             if self.get('xml') == 'auto':
-                xmlconf = spcall('xml2-config --libs')
+                xmlconf = spcall('pkg-config --libs libxml-2.0')
                 if xmlconf and uwsgi_os != 'Darwin':
                     self.libs.append(xmlconf)
-                    xmlconf = spcall("xml2-config --cflags")
+                    xmlconf = spcall("pkg-config --cflags libxml-2.0")
                     self.cflags.append(xmlconf)
                     self.cflags.append("-DUWSGI_XML -DUWSGI_XML_LIBXML2")
                     self.gcc_list.append('core/xmlconf')
@@ -1329,13 +1329,13 @@ class uConf(object):
                     self.gcc_list.append('core/xmlconf')
                     report['xml'] = 'expat'
             elif self.get('xml') == 'libxml2':
-                xmlconf = spcall('xml2-config --libs')
+                xmlconf = spcall('pkg-config --libs libxml-2.0')
                 if xmlconf is None:
                     print("*** libxml2 headers unavailable. uWSGI build is interrupted. You have to install libxml2 development package or use libexpat or disable XML")
                     sys.exit(1)
                 else:
                     self.libs.append(xmlconf)
-                    xmlconf = spcall("xml2-config --cflags")
+                    xmlconf = spcall("pkg-config --cflags libxml-2.0")
                     if xmlconf is None:
                         print("*** libxml2 headers unavailable. uWSGI build is interrupted. You have to install libxml2 development package or use libexpat or disable XML")
                         sys.exit(1)

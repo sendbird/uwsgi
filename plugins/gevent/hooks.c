@@ -143,4 +143,3 @@ int uwsgi_gevent_wait_milliseconds_hook(int timeout) {
 
         return -1;
 }
-
